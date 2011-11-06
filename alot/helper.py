@@ -31,7 +31,6 @@ from email.mime.image import MIMEImage
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import urwid
-import logging
 
 from settings import config
 
