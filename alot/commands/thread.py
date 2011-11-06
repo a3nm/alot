@@ -304,7 +304,11 @@ class PipeCommand(Command):
           else:
               mailstrings = [e.as_string() for e in mails]
         if not self.separately:
-            mailstrings = ['\n\n'.join(mailstrings)]
+            if self.ids:
+                separator = '\n'
+            else:
+                separator = '\n\n'
+            mailstrings = [separator.join(mailstrings)]
 
         # do teh monkey
         for mail in mailstrings:
