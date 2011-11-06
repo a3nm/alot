@@ -102,14 +102,6 @@ class ThreadlineWidget(urwid.AttrMap):
         cols.append(('fixed', len(datestring), self.date_w))
 
         if self.thread:
-          mailcountstring = "(%d)" % self.thread.get_total_messages()
-        else:
-          mailcountstring = "(?)"
-        self.mailcount_w = urwid.AttrMap(urwid.Text(mailcountstring),
-                                   'threadline_mailcount')
-        cols.append(('fixed', len(mailcountstring), self.mailcount_w))
-
-        if self.thread:
           self.tag_widgets = [TagWidget(tag) for tag in self.thread.get_tags()]
         else:
           self.tag_widgets = []
@@ -127,6 +119,14 @@ class ThreadlineWidget(urwid.AttrMap):
         self.authors_w = urwid.AttrMap(urwid.Text(authorsstring),
                                        'threadline_authors')
         cols.append(('fixed', len(authorsstring), self.authors_w))
+
+        if self.thread:
+          mailcountstring = "(%d)" % self.thread.get_total_messages()
+        else:
+          mailcountstring = "(?)"
+        self.mailcount_w = urwid.AttrMap(urwid.Text(mailcountstring),
+                                   'threadline_mailcount')
+        cols.append(('fixed', len(mailcountstring), self.mailcount_w))
 
         if self.thread:
           subjectstring = self.thread.get_subject().strip()
