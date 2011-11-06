@@ -226,10 +226,10 @@ def extract_body(mail, types=None):
                 tmpfile.close()
                 #create and call external command
                 cmd = handler % tmpfile.name
-                rendered_payload = helper.cmd_output(cmd)
+                rendered_payload = helper.run_command(cmd)
                 #remove tempfile
                 os.unlink(tmpfile.name)
-                if rendered_payload:  # handler had output
+                if rendered_payload[0] != '':  # handler had output
                     body_parts.append(string_sanitize(rendered_payload))
                 elif part.get_content_maintype() == 'text':
                     body_parts.append(string_sanitize(raw_payload))

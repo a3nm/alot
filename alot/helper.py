@@ -194,18 +194,6 @@ def pretty_datetime(d):
     return string
 
 
-def cmd_output(command_line):
-    args = shlex.split(command_line.encode('utf-8', errors='ignore'))
-    try:
-        output = subprocess.check_output(args)
-        output = string_decode(output, urwid.util.detected_encoding)
-    except subprocess.CalledProcessError:
-        return None
-    except OSError:
-        return None
-    return output
-
-
 def run_command(cmd, pipe=None):
     """run a command
     pipe is something to pipe to the command"""
