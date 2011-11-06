@@ -31,6 +31,7 @@ from email.mime.image import MIMEImage
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import urwid
+import logging
 
 from settings import config
 
@@ -205,25 +206,34 @@ def cmd_output(command_line):
     return output
 
 
-def pipe_to_command(cmd, stdin):
-        # remove quotes which have been put around the whole command
-        if cmd[0] == '"' and cmd[-1] == '"':
-            cmd = cmd[1:-1]
-        args = shlex.split(cmd.encode('utf-8', errors='ignore'))
-        try:
-            proc = subprocess.Popen(args, stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE)
-            out, err = proc.communicate(stdin)
-        except OSError, e:
-            return '', str(e)
-        if proc.poll():  # returncode is not 0
-            e = 'return value != 0'
-            if err.strip():
-                e = e + ': %s' % err
-            return '', e
+def run_command(cmd, pipe=None, args=[]):
+    """run a command
+    pipe is something to pipe to the command
+    args are additional arguments for the command"""
+
+    # remove quotes which have been put around the whole command
+    if cmd[0] == '"' and cmd[-1] == '"':
+        cmd = cmd[1:-1]
+    all_args = shlex.split(cmd.encode('utf-8', errors='ignore'))
+    all_args += args
+    try:
+        if pipe:
+            mystdin = subprocess.Pipe
         else:
-            return out, err
+            mystdin = None
+        proc = subprocess.Popen(all_args, stdin=mystdin,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        out, err = proc.communicate(pipe)
+    except OSError, e:
+        return '', str(e)
+    if proc.poll():  # returncode is not 0
+        e = 'return value != 0'
+        if err.strip():
+            e = e + ': %s' % err
+        return '', e
+    else:
+        return out, err
 
 
 def attach(path, mail, filename=None):
