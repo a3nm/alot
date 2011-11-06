@@ -206,23 +206,21 @@ def cmd_output(command_line):
     return output
 
 
-def run_command(cmd, pipe=None, args=[]):
+def run_command(cmd, pipe=None):
     """run a command
-    pipe is something to pipe to the command
-    args are additional arguments for the command"""
+    pipe is something to pipe to the command"""
 
     # remove quotes which have been put around the whole command
     cmd = cmd.strip()
     if cmd[0] == '"' and cmd[-1] == '"':
         cmd = cmd[1:-1]
-    all_args = shlex.split(cmd.encode('utf-8', errors='ignore'))
-    all_args += args
+    args = shlex.split(cmd.encode('utf-8', errors='ignore'))
     try:
         if pipe:
             mystdin = subprocess.Pipe
         else:
             mystdin = None
-        proc = subprocess.Popen(all_args, stdin=mystdin,
+        proc = subprocess.Popen(args, stdin=mystdin,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         out, err = proc.communicate(pipe)

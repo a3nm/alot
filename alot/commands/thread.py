@@ -325,7 +325,7 @@ class PipeCommand(Command):
         for mail in mailstrings:
             ui.logger.debug("%s" % mail)
             if self.args:
-                out, err = helper.run_command(self.cmd, args=mail)
+                out, err = helper.run_command(self.cmd + mail)
             else:
                 out, err = helper.run_command(self.cmd, pipe=mail)
             if err:
