@@ -26,7 +26,7 @@ import os
 from ConfigParser import SafeConfigParser
 from urlparse import urlparse
 
-from helper import run_program
+from helper import run_command
 import helper
 
 
@@ -293,7 +293,7 @@ class MatchSdtoutAddressbook(AddressBook):
         return self.lookup('\'\'')
 
     def lookup(self, prefix):
-        resultstring = run_program('%s %s' % (self.command, prefix))
+        resultstring = run_command('%s %s' % (self.command, prefix))
         if resultstring[0] == '':
             return []
         lines = resultstring[0].replace('\t', ' ' * 4).splitlines()
