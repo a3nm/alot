@@ -212,6 +212,7 @@ def run_command(cmd, pipe=None, args=[]):
     args are additional arguments for the command"""
 
     # remove quotes which have been put around the whole command
+    cmd = cmd.strip()
     if cmd[0] == '"' and cmd[-1] == '"':
         cmd = cmd[1:-1]
     all_args = shlex.split(cmd.encode('utf-8', errors='ignore'))
