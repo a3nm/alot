@@ -230,7 +230,7 @@ def extract_body(mail, types=None):
                 #remove tempfile
                 os.unlink(tmpfile.name)
                 if rendered_payload[0] != '':  # handler had output
-                    body_parts.append(string_sanitize(rendered_payload))
+                    body_parts.append(string_sanitize(rendered_payload[0]))
                 elif part.get_content_maintype() == 'text':
                     body_parts.append(string_sanitize(raw_payload))
                 # else drop
