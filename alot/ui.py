@@ -50,11 +50,16 @@ class InputWrap(urwid.WidgetWrap):
         if cmdline:
             try:
                 commands = cmdline.split(';')
+                applied = False
                 for command in commands:
-                  cmd = commandfactory(command, mode)
-                  if self.allowed_command(cmd):
-                      self.ui.apply_command(cmd)
-                return None
+                    cmd = commandfactory(command, mode)
+                    if self.allowed_command(cmd):
+                        applied = True
+                        self.ui.apply_command(cmd)
+                    else:
+                        break
+                if applied:
+                    return None
             except CommandParseError, e:
                 self.ui.notify(e.message, priority='error')
         return self._w.keypress(size, key)
