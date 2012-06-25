@@ -1,9 +1,12 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import re
 import os
-import shlex
 
 from alot.settings.utils import read_config
 from helper import call_cmd
+from alot.helper import split_commandstring
 
 
 class AddressBook(object):
@@ -44,8 +47,11 @@ class AbookAddressBook(AddressBook):
 
     def get_contacts(self):
         c = self._config
-        return [(c[id]['name'], c[id]['email']) for id in c.sections if \
-                c[id]['email'] is not None]
+        res = []
+        for id in c.sections:
+            for email in c[id]['email']:
+                if email: res.append((c[id]['name'], email))
+        return res
 
 
 class MatchSdtoutAddressbook(AddressBook):
@@ -70,7 +76,7 @@ class MatchSdtoutAddressbook(AddressBook):
         return self.lookup('\'\'')
 
     def lookup(self, prefix):
-        cmdlist = shlex.split(self.command.encode('utf-8', errors='ignore'))
+        cmdlist = split_commandstring(self.command)
         resultstring, errmsg, retval = call_cmd(cmdlist + [prefix])
         if not resultstring:
             return []

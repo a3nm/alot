@@ -1,4 +1,6 @@
-#!/usr/bin/env python
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import sys
 import logging
 import os
@@ -85,7 +87,7 @@ class Options(usage.Options):
 
     optParameters = [
             ['config', 'c', None, 'config file'],
-            ['notmuch-config', 'n', '~/.notmuch-config', 'notmuch config'],
+            ['notmuch-config', 'n', None, 'notmuch config'],
             ['colour-mode', 'C', None, 'terminal colour mode', colourint],
             ['mailindex-path', 'p', None, 'path to notmuch index'],
             ['debug-level', 'd', 'info', 'debug log', debuglogstring],
@@ -137,7 +139,10 @@ def main():
         configfiles.insert(0, expanded_path)
 
     # locate notmuch config
-    notmuchconfig = os.path.expanduser(args['notmuch-config'])
+    notmuchpath = os.environ.get('NOTMUCH_CONFIG', '~/.notmuch-config')
+    if args['notmuch-config']:
+        notmuchpath = args['notmuch-config']
+    notmuchconfig = os.path.expanduser(notmuchpath)
 
     alotconfig = None
     # read the first alot config file we find
@@ -181,6 +186,3 @@ def main():
 
     # set up and start interface
     UI(dbman, cmd)
-
-if __name__ == "__main__":
-    main()

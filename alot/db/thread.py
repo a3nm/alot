@@ -1,3 +1,6 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 from datetime import datetime
 
 from message import Message
@@ -77,8 +80,8 @@ class Thread(object):
         .. note::
 
             This only adds the requested operation to this objects
-            :class:`DBManager's <~alot.db.DBManager>` write queue.
-            You need to call :meth:`DBManager.flush <~alot.db.DBManager.flush>`
+            :class:`DBManager's <alot.db.DBManager>` write queue.
+            You need to call :meth:`DBManager.flush <alot.db.DBManager.flush>`
             to actually write out.
 
         :param tags: a list of tags to be added
@@ -108,7 +111,7 @@ class Thread(object):
 
             This only adds the requested operation to this objects
             :class:`DBManager's <alot.db.DBManager>` write queue.
-            You need to call :meth:`DBManager.flush  <alot.db.DBManager.flush>`
+            You need to call :meth:`DBManager.flush <alot.db.DBManager.flush>`
             to actually write out.
 
         :param tags: a list of tags to be added

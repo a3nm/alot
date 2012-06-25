@@ -1,14 +1,17 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import os
 import code
 from twisted.internet import threads
 import subprocess
-import shlex
 import email
 import urwid
 from twisted.internet.defer import inlineCallbacks
 import logging
 import argparse
 import glob
+from StringIO import StringIO
 
 from alot.commands import Command, registerCommand
 from alot.completion import CommandLineCompleter
@@ -17,12 +20,16 @@ from alot.commands import commandfactory
 from alot import buffers
 from alot import widgets
 from alot import helper
+from alot import crypto
 from alot.db.errors import DatabaseLockedError
 from alot.completion import ContactsCompleter
 from alot.completion import AccountCompleter
 from alot.db.envelope import Envelope
 from alot import commands
 from alot.settings import settings
+from alot.errors import GPGProblem
+from alot.helper import split_commandstring
+from alot.utils.booleanaction import BooleanAction
 
 MODE = 'global'
 
@@ -92,7 +99,7 @@ class PromptCommand(Command):
     @inlineCallbacks
     def apply(self, ui):
         logging.info('open command shell')
-        mode = ui.current_buffer.modename
+        mode = ui.mode or 'global'
         cmpl = CommandLineCompleter(ui.dbman, mode, ui.current_buffer)
         cmdline = yield ui.prompt('',
                                   text=self.startwith,
@@ -106,7 +113,6 @@ class PromptCommand(Command):
             # save into prompt history
             ui.commandprompthistory.append(cmdline)
 
-            mode = ui.current_buffer.modename
             try:
                 cmd = commandfactory(cmdline, mode)
                 ui.apply_command(cmd)
@@ -123,23 +129,28 @@ class RefreshCommand(Command):
 
 
 @registerCommand(MODE, 'shellescape', arguments=[
-    (['--spawn'], {'action': 'store_true', 'help':'run in terminal window'}),
-    (['--thread'], {'action': 'store_true', 'help':'run in separate thread'}),
-    (['--refocus'], {'action': 'store_true', 'help':'refocus current buffer \
+    (['--spawn'], {'action': BooleanAction, 'default':None,
+                   'help':'run in terminal window'}),
+    (['--thread'], {'action': BooleanAction, 'default':None,
+                    'help':'run in separate thread'}),
+    (['--refocus'], {'action': BooleanAction, 'help':'refocus current buffer \
                      after command has finished'}),
     (['cmd'], {'help':'command line to execute'})],
+    forced={'shell': True},
 )
 class ExternalCommand(Command):
     """run external command"""
-    def __init__(self, cmd, path=None, spawn=False, refocus=True,
-                 thread=False, on_success=None, **kwargs):
+    def __init__(self, cmd, stdin=None, shell=False, spawn=False,
+                 refocus=True, thread=False, on_success=None, **kwargs):
         """
         :param cmd: the command to call
-        :type cmd: str
-        :param path: a path to a file (or None)
-        :type path: str
+        :type cmd: list or str
+        :param stdin: input to pipe to the process
+        :type stdin: file or str
         :param spawn: run command in a new terminal
         :type spawn: bool
+        :param shell: let shell interpret command string
+        :type shell: bool
         :param thread: run asynchronously, don't block alot
         :type thread: bool
         :param refocus: refocus calling buffer after cmd termination
@@ -147,16 +158,48 @@ class ExternalCommand(Command):
         :param on_success: code to execute after command successfully exited
         :type on_success: callable
         """
-        self.commandstring = cmd
-        self.path = path
-        self.spawn = spawn
+        logging.debug({'spawn': spawn})
+        # make sure cmd is a list of str
+        if isinstance(cmd, unicode):
+            # convert cmdstring to list: in case shell==True,
+            # Popen passes only the first item in the list to $SHELL
+            cmd = [cmd] if shell else split_commandstring(cmd)
+
+        # determine complete command list to pass
+        touchhook = settings.get_hook('touch_external_cmdlist')
+        # filter cmd, shell and thread through hook if defined
+        if touchhook is not None:
+            logging.debug('calling hook: touch_external_cmdlist')
+            res = touchhook(cmd, shell=shell, spawn=spawn, thread=thread)
+            logging.debug('got: %s' % res)
+            cmd, shell, self.in_thread = res
+        # otherwise if spawn requested and X11 is running
+        elif spawn and 'DISPLAY' in os.environ:
+            term_cmd = settings.get('terminal_cmd', '')
+            logging.info('spawn in terminal: %s' % term_cmd)
+            termcmdlist = split_commandstring(term_cmd)
+            cmd = termcmdlist + cmd
+
+        self.cmdlist = cmd
+        self.stdin = stdin
+        self.shell = shell
         self.refocus = refocus
         self.in_thread = thread
         self.on_success = on_success
         Command.__init__(self, **kwargs)
 
     def apply(self, ui):
+        logging.debug('cmdlist: %s' % self.cmdlist)
         callerbuffer = ui.current_buffer
+
+        #set standard input for subcommand
+        stdin = None
+        if self.stdin is not None:
+            # wrap strings in StrinIO so that they behaves like a file
+            if isinstance(self.stdin, unicode):
+                stdin = StringIO(self.stdin)
+            else:
+                stdin = self.stdin
 
         def afterwards(data):
             if data == 'success':
@@ -168,24 +211,25 @@ class ExternalCommand(Command):
                 logging.info('refocussing')
                 ui.buffer_focus(callerbuffer)
 
-        def thread_code(*args):
-            if self.path:
-                if '{}' in self.commandstring:
-                    cmd = self.commandstring.replace('{}',
-                            helper.shell_quote(self.path))
-                else:
-                    cmd = '%s %s' % (self.commandstring,
-                                     helper.shell_quote(self.path))
-            else:
-                cmd = self.commandstring
+        logging.info('calling external command: %s' % self.cmdlist)
 
-            if self.spawn:
-                cmd = '%s %s' % (settings.get('terminal_cmd'), cmd)
-            cmd = cmd.encode('utf-8', errors='ignore')
-            logging.info('calling external command: %s' % cmd)
+        def thread_code(*args):
             try:
-                if 0 == subprocess.call(shlex.split(cmd)):
+                if stdin == None:
+                    proc = subprocess.Popen(self.cmdlist, shell=self.shell,
+                                            stderr=subprocess.PIPE)
+                    ret = proc.wait()
+                    err = proc.stderr.read()
+                else:
+                    proc = subprocess.Popen(self.cmdlist, shell=self.shell,
+                                            stdin=subprocess.PIPE,
+                                            stderr=subprocess.PIPE)
+                    out, err = proc.communicate(stdin.read())
+                    ret = proc.wait()
+                if ret == 0:
                     return 'success'
+                else:
+                    return err.strip()
             except OSError, e:
                 return str(e)
 
@@ -210,34 +254,40 @@ class EditCommand(ExternalCommand):
         """
         :param path: path to the file to be edited
         :type path: str
-        :param spawn: run command in a new terminal
+        :param spawn: force running edtor in a new terminal
         :type spawn: bool
         :param thread: run asynchronously, don't block alot
         :type thread: bool
         """
-        self.path = path
-        if spawn != None:
-            self.spawn = spawn
-        else:
+        self.spawn = spawn
+        if spawn is None:
             self.spawn = settings.get('editor_spawn')
-        if thread != None:
-            self.thread = thread
-        else:
+        self.thread = thread
+        if thread is None:
             self.thread = settings.get('editor_in_thread')
 
-        self.editor_cmd = None
+        editor_cmdstring = None
         if os.path.isfile('/usr/bin/editor'):
-            self.editor_cmd = '/usr/bin/editor'
-        self.editor_cmd = os.environ.get('EDITOR', self.editor_cmd)
-        self.editor_cmd = settings.get('editor_cmd') or self.editor_cmd
-        logging.debug('using editor_cmd: %s' % self.editor_cmd)
+            editor_cmdstring = '/usr/bin/editor'
+        editor_cmdstring = os.environ.get('EDITOR', editor_cmdstring)
+        editor_cmdstring = settings.get('editor_cmd') or editor_cmdstring
+        logging.debug('using editor_cmd: %s' % editor_cmdstring)
 
-        ExternalCommand.__init__(self, self.editor_cmd, path=self.path,
+        self.cmdlist = None
+        if '%s' in editor_cmdstring:
+            cmdstring = editor_cmdstring.replace('%s',
+                                                 helper.shell_quote(path))
+            self.cmdlist = split_commandstring(cmdstring)
+        else:
+            self.cmdlist = split_commandstring(editor_cmdstring) + [path]
+
+        logging.debug({'spawn: ': self.spawn, 'in_thread': self.thread})
+        ExternalCommand.__init__(self, self.cmdlist,
                                  spawn=self.spawn, thread=self.thread,
                                  **kwargs)
 
     def apply(self, ui):
-        if self.editor_cmd == None:
+        if self.cmdlist == None:
             ui.notify('no editor set', priority='error')
         else:
             return ExternalCommand.apply(self, ui)
@@ -362,6 +412,7 @@ class FlushCommand(Command):
             ui.notify('index locked, will try again in %d secs' % timeout)
             ui.update()
             return
+        logging.debug('flush complete')
 
 
 #TODO: choices
@@ -383,8 +434,14 @@ class HelpCommand(Command):
     def apply(self, ui):
         logging.debug('HELP')
         if self.commandname == 'bindings':
+            text_att = settings.get_theming_attribute('help', 'text')
+            title_att = settings.get_theming_attribute('help', 'title')
+            section_att = settings.get_theming_attribute('help', 'section')
             # get mappings
-            modemaps = dict(settings._bindings[ui.mode].items())
+            if ui.mode in settings._bindings:
+                modemaps = dict(settings._bindings[ui.mode].items())
+            else:
+                modemaps = {}
             is_scalar = lambda (k, v): k in settings._bindings.scalars
             globalmaps = dict(filter(is_scalar, settings._bindings.items()))
 
@@ -395,29 +452,28 @@ class HelpCommand(Command):
 
             linewidgets = []
             # mode specific maps
-            linewidgets.append(urwid.Text(('help_section',
-                                '\n%s-mode specific maps' % ui.mode)))
-            for (k, v) in modemaps.items():
-                line = urwid.Columns([('fixed', keycolumnwidth, urwid.Text(k)),
-                                      urwid.Text(v)])
-                linewidgets.append(line)
+            if modemaps:
+                linewidgets.append(urwid.Text((section_att,
+                                    '\n%s-mode specific maps' % ui.mode)))
+                for (k, v) in modemaps.items():
+                    line = urwid.Columns([('fixed', keycolumnwidth,
+                                           urwid.Text((text_att, k))),
+                                          urwid.Text((text_att, v))])
+                    linewidgets.append(line)
 
             # global maps
-            linewidgets.append(urwid.Text(('help_section',
-                                           '\nglobal maps')))
+            linewidgets.append(urwid.Text((section_att, '\nglobal maps')))
             for (k, v) in globalmaps.items():
                 if k not in modemaps:
                     line = urwid.Columns(
-                        [('fixed', keycolumnwidth, urwid.Text(k)),
-                         urwid.Text(v)])
+                        [('fixed', keycolumnwidth, urwid.Text((text_att, k))),
+                         urwid.Text((text_att, v))])
                     linewidgets.append(line)
 
             body = urwid.ListBox(linewidgets)
             ckey = 'cancel'
             titletext = 'Bindings Help (%s cancels)' % ckey
 
-            text_att = settings.get_theming_attribute('help', 'text')
-            title_att = settings.get_theming_attribute('help', 'title')
             box = widgets.DialogBox(body, titletext,
                                     bodyattr=text_att,
                                     titleattr=title_att)
@@ -448,7 +504,7 @@ class HelpCommand(Command):
     (['--attach'], {'nargs':'+', 'help':'attach files'}),
     (['--omit_signature'], {'action': 'store_true',
                             'help':'do not add signature'}),
-    (['--spawn'], {'action': 'store_true',
+    (['--spawn'], {'action': BooleanAction, 'default':None,
                    'help':'spawn editor in new terminal'}),
 ])
 class ComposeCommand(Command):
@@ -594,12 +650,17 @@ class ComposeCommand(Command):
                                         select='yes', cancel='no')) == 'no':
                             return
 
+        # Figure out whether we should GPG sign messages by default
+        # and look up key if so
+        sender = self.envelope.get('From')
+        name, addr = email.Utils.parseaddr(sender)
+        account = settings.get_account_by_address(addr)
+        if account:
+            self.envelope.sign = account.sign_by_default
+            self.envelope.sign_key = account.gpg_key
+
         # get missing To header
         if 'To' not in self.envelope.headers:
-            sender = self.envelope.get('From')
-            name, addr = email.Utils.parseaddr(sender)
-            account = settings.get_account_by_address(addr)
-
             allbooks = not settings.get('complete_matching_abook_only')
             logging.debug(allbooks)
             if account is not None:

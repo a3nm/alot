@@ -1,11 +1,15 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import os
 import logging
 import tempfile
 from twisted.internet.defer import inlineCallbacks
-import shlex
 import re
 import subprocess
 from email.Utils import parseaddr
+import mailcap
+from cStringIO import StringIO
 
 from alot.commands import Command, registerCommand
 from alot.commands.globals import ExternalCommand
@@ -20,9 +24,11 @@ from alot.db.utils import extract_headers
 from alot.db.utils import extract_body
 from alot.db.envelope import Envelope
 from alot.db.attachment import Attachment
-
 from alot.db.errors import DatabaseROError
 from alot.settings import settings
+from alot.helper import parse_mailcap_nametemplate
+from alot.helper import split_commandstring
+from alot.utils.booleanaction import BooleanAction
 
 MODE = 'thread'
 
@@ -68,7 +74,7 @@ def recipient_to_from(mail, my_accounts):
 
 @registerCommand(MODE, 'reply', arguments=[
     (['--all'], {'action':'store_true', 'help':'reply to all'}),
-    (['--spawn'], {'action': 'store_true',
+    (['--spawn'], {'action': BooleanAction, 'default':None,
                    'help':'open editor in new window'})])
 class ReplyCommand(Command):
     """reply to message"""
@@ -105,17 +111,27 @@ class ReplyCommand(Command):
         if qf:
             quotestring = qf(name, address, timestamp, ui=ui, dbm=ui.dbman)
         else:
-            quotestring = 'Quoting %s (%s)\n' % (name, timestamp)
+            quotestring = 'Quoting %s (%s)\n' % (name or address, timestamp)
         mailcontent = quotestring
-        for line in self.message.accumulate_body().splitlines():
-            mailcontent += '>' + line + '\n'
+        quotehook = settings.get_hook('text_quote')
+        if quotehook:
+            mailcontent += quotehook(self.message.accumulate_body())
+        else:
+            quote_prefix = settings.get('quote_prefix')
+            for line in self.message.accumulate_body().splitlines():
+                mailcontent += quote_prefix + line + '\n'
 
         envelope = Envelope(bodytext=mailcontent)
 
         # copy subject
         subject = decode_header(mail.get('Subject', ''))
-        if not subject.startswith('Re:'):
-            subject = 'Re: ' + subject
+        reply_subject_hook = settings.get_hook('reply_subject')
+        if reply_subject_hook:
+            subject = reply_subject_hook(subject)
+        else:
+            rsp = settings.get('reply_subject_prefix')
+            if not subject.startswith(('Re:', rsp)):
+                subject = rsp + subject
         envelope.add('Subject', subject)
 
         # set From
@@ -170,7 +186,7 @@ class ReplyCommand(Command):
 
 @registerCommand(MODE, 'forward', arguments=[
     (['--attach'], {'action':'store_true', 'help':'attach original mail'}),
-    (['--spawn'], {'action': 'store_true',
+    (['--spawn'], {'action': BooleanAction, 'default':None,
                    'help':'open editor in new window'})])
 class ForwardCommand(Command):
     """forward message"""
@@ -210,22 +226,34 @@ class ForwardCommand(Command):
             if qf:
                 quote = qf(name, address, timestamp, ui=ui, dbm=ui.dbman)
             else:
-                quote = 'Forwarded message from %s (%s):\n' % (name, timestamp)
+                quote = 'Forwarded message from %s (%s):\n' % (name or address, timestamp)
             mailcontent = quote
-            for line in self.message.accumulate_body().splitlines():
-                mailcontent += '>' + line + '\n'
+            quotehook = settings.get_hook('text_quote')
+            if quotehook:
+                mailcontent += quotehook(self.message.accumulate_body())
+            else:
+                quote_prefix = settings.get('quote_prefix')
+                for line in self.message.accumulate_body().splitlines():
+                    mailcontent += quote_prefix + line + '\n'
 
             envelope.body = mailcontent
 
         else:  # attach original mode
             # attach original msg
-            mail.set_default_type('message/rfc822')
+            mail.set_type('message/rfc822')
             mail['Content-Disposition'] = 'attachment'
             envelope.attach(Attachment(mail))
 
         # copy subject
         subject = decode_header(mail.get('Subject', ''))
         subject = 'Fwd: ' + subject
+        forward_subject_hook = settings.get_hook('forward_subject')
+        if forward_subject_hook:
+            subject = forward_subject_hook(subject)
+        else:
+            fsp = settings.get('forward_subject_prefix')
+            if not subject.startswith(('Fwd:', fsp)):
+                subject = fsp + subject
         envelope.add('Subject', subject)
 
         # set From
@@ -238,7 +266,7 @@ class ForwardCommand(Command):
 
 
 @registerCommand(MODE, 'editnew', arguments=[
-    (['--spawn'], {'action': 'store_true',
+    (['--spawn'], {'action': BooleanAction, 'default':None,
                    'help':'open editor in new window'})])
 class EditNewCommand(Command):
     """edit message in as new"""
@@ -399,7 +427,7 @@ class PipeCommand(Command):
         """
         Command.__init__(self, **kwargs)
         if isinstance(cmd, unicode):
-            cmd = shlex.split(cmd.encode('UTF-8'))
+            cmd = split_commandstring(cmd)
         self.cmd = cmd
         self.whole_thread = all
         self.separately = separately
@@ -510,15 +538,16 @@ class RemoveCommand(Command):
 
     @inlineCallbacks
     def apply(self, ui):
+        threadbuffer = ui.current_buffer
         # get messages and notification strings
         if self.all:
-            thread = ui.current_buffer.get_selected_thread()
+            thread = threadbuffer.get_selected_thread()
             tid = thread.get_thread_id()
             messages = thread.get_messages().keys()
             confirm_msg = 'remove all messages in thread?'
             ok_msg = 'removed all messages in thread: %s' % tid
         else:
-            msg = ui.current_buffer.get_selected_message()
+            msg = threadbuffer.get_selected_message()
             messages = [msg]
             confirm_msg = 'remove selected message?'
             ok_msg = 'removed message: %s' % msg.get_message_id()
@@ -529,8 +558,8 @@ class RemoveCommand(Command):
 
         # notify callback
         def callback():
+            threadbuffer.rebuild()
             ui.notify(ok_msg)
-            ui.apply_command(RefreshCommand())
 
         # remove messages
         for m in messages:
@@ -606,11 +635,12 @@ class SaveAttachmentCommand(Command):
     @inlineCallbacks
     def apply(self, ui):
         pcomplete = completion.PathCompleter()
+        savedir = settings.get('attachment_prefix', '~')
         if self.all:
             msg = ui.current_buffer.get_selected_message()
             if not self.path:
                 self.path = yield ui.prompt('save attachments to',
-                                            text=os.path.join('~', ''),
+                                            text=os.path.join(savedir, ''),
                                             completer=pcomplete)
             if self.path:
                 if os.path.isdir(os.path.expanduser(self.path)):
@@ -633,7 +663,7 @@ class SaveAttachmentCommand(Command):
                 filename = attachment.get_filename()
                 if not self.path:
                     msg = 'save attachment (%s) to ' % filename
-                    initialtext = os.path.join('~', filename)
+                    initialtext = os.path.join(savedir, filename)
                     self.path = yield ui.prompt(msg,
                                                 completer=pcomplete,
                                                 text=initialtext)
@@ -661,19 +691,49 @@ class OpenAttachmentCommand(Command):
         logging.info('open attachment')
         mimetype = self.attachment.get_content_type()
 
-        handler = settings.get_mime_handler(mimetype)
-        if handler:
-            path = self.attachment.save(tempfile.gettempdir())
-            handler = re.sub('\'?%s\'?', '{}', handler)
+        # returns pair of preliminary command string and entry dict containing
+        # more info. We only use the dict and construct the command ourselves
+        _, entry = settings.mailcap_find_match(mimetype)
+        if entry:
+            afterwards = None  # callback, will rm tempfile if used
+            handler_stdin = None
+            tempfile_name = None
+            handler_raw_commandstring = entry['view']
+            # read parameter
+            part = self.attachment.get_mime_representation()
+            parms = tuple(map('='.join, part.get_params()))
+
+            # in case the mailcap defined command contains no '%s',
+            # we pipe the files content to the handling command via stdin
+            if '%s' in handler_raw_commandstring:
+                nametemplate = entry.get('nametemplate', '%s')
+                prefix, suffix = parse_mailcap_nametemplate(nametemplate)
+                tmpfile = tempfile.NamedTemporaryFile(delete=False,
+                                                      prefix=prefix,
+                                                      suffix=suffix)
+
+                tempfile_name = tmpfile.name
+                self.attachment.write(tmpfile)
+                tmpfile.close()
+
+                def afterwards():
+                    os.remove(tempfile_name)
+            else:
+                handler_stdin = StringIO()
+                self.attachment.write(handler_stdin)
+
+            # create handler command list
+            handler_cmd = mailcap.subst(handler_raw_commandstring, mimetype,
+                                        filename=tempfile_name, plist=parms)
+
+            handler_cmdlist = split_commandstring(handler_cmd)
 
             # 'needsterminal' makes handler overtake the terminal
-            nt = settings.get_mime_handler(mimetype, key='needsterminal')
+            nt = entry.get('needsterminal', None)
             overtakes = (nt is None)
 
-            def afterwards():
-                os.remove(path)
-
-            ui.apply_command(ExternalCommand(handler, path=path,
+            ui.apply_command(ExternalCommand(handler_cmdlist,
+                                             stdin=handler_stdin,
                                              on_success=afterwards,
                                              thread=overtakes))
         else:

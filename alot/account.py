@@ -1,12 +1,16 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import mailbox
 import logging
 import time
 import email
 import os
 import glob
-import shlex
 
 from alot.helper import call_cmd_async
+from alot.helper import split_commandstring
+import alot.crypto as crypto
 
 
 class SendingMailFailed(RuntimeError):
@@ -47,7 +51,7 @@ class Account(object):
                  gpg_key=None, signature=None, signature_filename=None,
                  signature_as_attachment=False, sent_box=None,
                  sent_tags=['sent'], draft_box=None, draft_tags=['draft'],
-                 abook=None, **rest):
+                 abook=None, sign_by_default=False, **rest):
         self.address = address
         self.aliases = aliases
         self.realname = realname
@@ -55,6 +59,7 @@ class Account(object):
         self.signature = signature
         self.signature_filename = signature_filename
         self.signature_as_attachment = signature_as_attachment
+        self.sign_by_default = sign_by_default
         self.sent_box = sent_box
         self.sent_tags = sent_tags
         self.draft_box = draft_box
@@ -149,7 +154,7 @@ class SendmailAccount(Account):
 
     def send_mail(self, mail):
         mail['Date'] = email.utils.formatdate(time.time(), True)
-        cmdlist = shlex.split(self.cmd.encode('utf-8', errors='ignore'))
+        cmdlist = split_commandstring(self.cmd)
 
         def cb(out):
             logging.info('sent mail successfully')
@@ -163,7 +168,7 @@ class SendmailAccount(Account):
             logging.error(failure.value.stderr)
             raise SendingMailFailed(errmsg)
 
-        d = call_cmd_async(cmdlist, stdin=mail.as_string())
+        d = call_cmd_async(cmdlist, stdin=crypto.email_as_string(mail))
         d.addCallback(cb)
         d.addErrback(errb)
         return d

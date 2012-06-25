@@ -1,3 +1,6 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import re
 import os
 import glob
@@ -7,6 +10,7 @@ import argparse
 import alot.commands as commands
 from alot.buffers import EnvelopeBuffer
 from alot.settings import settings
+from alot.utils.booleanaction import BooleanAction
 
 
 class Completer(object):
@@ -228,13 +232,15 @@ class ArgparseOptionCompleter(Completer):
                 optionstring = pref[:pref.rfind('=') + 1]
                 # get choices
                 if 'choices' in act.__dict__:
+                    # TODO: respect prefix
                     choices = act.choices or []
                     res = res + [optionstring + a for a in choices]
             else:
                 for optionstring in act.option_strings:
                     if optionstring.startswith(pref):
                         # append '=' for options that await a string value
-                        if isinstance(act, argparse._StoreAction):
+                        if isinstance(act, argparse._StoreAction) or\
+                         isinstance(act, BooleanAction):
                             optionstring += '='
                         res.append(optionstring)
 
@@ -403,4 +409,15 @@ class PathCompleter(Completer):
         if not original:
             return [('~/', 2)]
         prefix = os.path.expanduser(original[:pos])
-        return [(f, len(f)) for f in glob.glob(prefix + '*')]
+
+        def escape(path):
+            return path.replace('\\', '\\\\').replace(' ', '\ ')
+
+        def deescape(escaped_path):
+            return escaped_path.replace('\\ ', ' ').replace('\\\\', '\\')
+
+        def prep(path):
+            escaped_path = escape(path)
+            return escaped_path, len(escaped_path)
+
+        return map(prep, glob.glob(deescape(prefix) + '*'))

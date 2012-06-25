@@ -24,12 +24,6 @@ The type of an option is used to validate a given value. For instance,
 if the type says "boolean" you may only provide "True" or "False" as values in your config file,
 otherwise alot will complain on startup. Strings *may* be quoted but do not need to be.
 
-.. warning::
-
-    values for options with type `string_list` *must* be comma-separated lists of strings
-    and must end in a comma if they only provide a single element:
-    "From," is a valid `string_list`, "From" is not.
-
 .. include:: alotrc_table.rst
 
 .. _account:
@@ -49,7 +43,7 @@ Here is an example configuration::
             sendmail_command = msmtp --account=wayne -t
             sent_box = maildir:///home/bruce/mail/work/Sent
             draft_box = maildir:///home/bruce/mail/work/Drafts
-    
+
         [[secret]]
             realname = Batman
             address = batman@batcave.org
@@ -61,7 +55,7 @@ Here is an example configuration::
 .. warning::
 
   Sending mails is only supported via a sendmail shell command for now. If you want
-  to use a sendmail command different from `sendmail`, specify it as `sendmail_command`.
+  to use a sendmail command different from `sendmail -t`, specify it as `sendmail_command`.
 
 The following entries are interpreted at the moment:
 
@@ -222,7 +216,56 @@ Apart from command pre- and posthooks, the following hooks will be interpreted:
     :param bodytext: text representation of mail body as displayed in the interface and as sent to the editor
     :type bodytext: str
     :rtype: str
-    
+
+.. py:function:: text_quote(message)
+
+    used to transform a message into a quoted one
+
+    :param message: message to be quoted
+    :type message: str
+    :rtype: str
+
+.. py:function:: timestamp_format(timestamp)
+
+    represents given timestamp as string
+
+    :param bodytext: timestamp to represent
+    :type timestamp: `datetime`
+    :rtype: str
+
+.. py:function:: touch_external_cmdlist(cmd, shell=shell, spawn=spawn, thread=thread)
+
+    used to change external commands according to given flags shortly
+    before they are called.
+
+    :param cmd: command to be called
+    :type cmd: list of str
+    :param shell: is this to be interpreted by the shell?
+    :type shell: bool
+    :param spawn: should be spawned in new terminal/environment
+    :type spawn: bool
+    :param threads: should be called in new thread
+    :type thread: bool
+    :returns: triple of amended command list, shell and thread flags
+    :rtype: list of str, bool, bool
+
+.. py:function:: reply_subject(subject)
+
+    used to reformat the subject header on reply
+
+    :param subject: subject to reformat
+    :type subject: str
+    :rtype: str
+
+.. py:function:: forward_subject(subject)
+
+    used to reformat the subject header on forward
+
+    :param subject: subject to reformat
+    :type subject: str
+    :rtype: str
+
+.. _themes:
 
 Themes
 ======
@@ -272,8 +315,8 @@ Custom Tagstring Formatting
 To specify how a particular tagstring is displayed throughout the interface you can
 add a subsection named after the tag to the `[tags]` config section.
 The following attribute keys will interpreted and may contain urwid attribute strings
-as described in the :ref:`Themes` section above:
-        
+as described in the :ref:`Themes <themes>` section above:
+
 `fg` (foreground), `bg` (background), `focus_fg` (foreground if focused) and `focus_bg` (background if focused).
 An alternative string representation is read from the option `translated` or can be given
 as pair of strings in `translation`.

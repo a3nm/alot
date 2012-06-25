@@ -1,3 +1,6 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import email
 from datetime import datetime
 import email.charset as charset
@@ -8,6 +11,7 @@ import alot.helper as helper
 from alot.settings import settings
 
 from utils import extract_headers, extract_body
+from alot.db.utils import decode_header
 from attachment import Attachment
 
 
@@ -34,8 +38,9 @@ class Message(object):
         self._datetime = helper.safely_get(casts_date,
                                           ValueError, None)
         self._filename = msg.get_filename()
-        self._from = helper.safely_get(lambda: msg.get_header('From'),
+        author = helper.safely_get(lambda: msg.get_header('From'),
                                        NullPointerError)
+        self._from = decode_header(author)
         self._email = None  # will be read upon first use
         self._attachments = None  # will be read upon first use
         self._tags = set(msg.get_tags())
@@ -118,18 +123,17 @@ class Message(object):
 
     def get_datestring(self):
         """
-        returns reformated datestring for this messages.
+        returns reformated datestring for this message.
 
-        It uses the format spacified by `timestamp_format` in
-        the general section of the config.
+        It uses :meth:`SettingsManager.represent_datetime` to represent
+        this messages `Date` header
+
+        :rtype: str
         """
         if self._datetime == None:
-            return None
-        formatstring = settings.get('timestamp_format')
-        if formatstring == None:
-            res = helper.pretty_datetime(self._datetime)
+            res = None
         else:
-            res = self._datetime.strftime(formatstring)
+            res = settings.represent_datetime(self._datetime)
         return res
 
     def get_author(self):
@@ -149,7 +153,7 @@ class Message(object):
         :param headers: headers to extract
         :type headers: list of str
         """
-        return extract_headers(self.get_mail(), headers)
+        return extract_headers(self.get_email(), headers)
 
     def add_tags(self, tags, afterwards=None, remove_rest=False):
         """

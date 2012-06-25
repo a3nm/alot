@@ -1,8 +1,10 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import os
 import email
 import tempfile
 import re
-import shlex
 from email.header import Header
 import email.charset as charset
 charset.add_charset('utf-8', charset.QP, charset.QP, 'utf-8')
@@ -14,6 +16,8 @@ import alot.helper as helper
 from alot.settings import settings
 from alot.helper import string_sanitize
 from alot.helper import string_decode
+from alot.helper import parse_mailcap_nametemplate
+from alot.helper import split_commandstring
 
 
 def extract_headers(mail, headers=None):
@@ -82,17 +86,10 @@ def extract_body(mail, types=None):
             if entry:
                 # open tempfile, respect mailcaps nametemplate
                 nametemplate = entry.get('nametemplate', '%s')
-                nt_list = nametemplate.split('%s')
-                template_prefix = ''
-                template_suffix = ''
-                if len(nt_list) == 2:
-                    template_suffix = nt_list[1]
-                    template_prefix = nt_list[0]
-                else:
-                    template_suffix = nametemplate
+                prefix, suffix = parse_mailcap_nametemplate(nametemplate)
                 tmpfile = tempfile.NamedTemporaryFile(delete=False,
-                                                      prefix=template_prefix,
-                                                      suffix=template_suffix)
+                                                      prefix=prefix,
+                                                      suffix=suffix)
                 # write payload to tmpfile
                 tmpfile.write(raw_payload)
                 tmpfile.close()
@@ -105,14 +102,14 @@ def extract_body(mail, types=None):
                                     filename=tmpfile.name, plist=parms)
                 logging.debug('command: %s' % cmd)
                 logging.debug('parms: %s' % str(parms))
-                cmdlist = shlex.split(cmd.encode('utf-8', errors='ignore'))
+                cmdlist = split_commandstring(cmd)
                 # call handler
                 rendered_payload, errmsg, retval = helper.call_cmd(cmdlist)
                 # remove tempfile
                 os.unlink(tmpfile.name)
                 if rendered_payload:  # handler had output
                     body_parts.append(string_sanitize(rendered_payload))
-    return '\n\n'.join(body_parts)
+    return u'\n\n'.join(body_parts)
 
 
 def decode_header(header, normalize=False):
@@ -138,8 +135,12 @@ def decode_header(header, normalize=False):
     except UnicodeEncodeError:
         return value
 
+    # some mailers send out incorrectly escaped headers
+    # and double quote the escaped realname part again. remove those
+    value = re.sub(r'\"(.*?=\?.*?.*?)\"', r'\1', value)
+
     # otherwise we interpret RFC2822 encoding escape sequences
-    valuelist = email.header.decode_header(header)
+    valuelist = email.header.decode_header(value)
     decoded_list = []
     for v, enc in valuelist:
         v = string_decode(v, enc)

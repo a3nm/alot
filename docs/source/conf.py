@@ -27,6 +27,7 @@ MOCK_MODULES = ['notmuch', 'notmuch.globals',
                 'twisted.internet.protocol',
                 'urwid',
                 'magic',
+                'gpgme',
                 'argparse']
 for mod_name in MOCK_MODULES:
     sys.modules[mod_name] = Mock()
@@ -247,5 +248,5 @@ man_pages = [
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     'http://docs.python.org/': None,
-    'http://notmuch.readthedocs.org/en/latest/': None
+    #'http://notmuch.readthedocs.org/en/latest/': None
 }

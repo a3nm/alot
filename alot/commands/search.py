@@ -1,3 +1,6 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import argparse
 import logging
 
@@ -148,30 +151,34 @@ class TagCommand(Command):
         Command.__init__(self, **kwargs)
 
     def apply(self, ui):
-        threadline_widget = ui.current_buffer.get_selected_threadline()
+        searchbuffer = ui.current_buffer
+        threadline_widget = searchbuffer.get_selected_threadline()
         # pass if the current buffer has no selected threadline
         # (displays an empty search result)
         if threadline_widget is None:
             return
         thread = threadline_widget.get_thread()
-        testquery = "(%s) AND thread:%s" % (ui.current_buffer.querystring,
+        testquery = "(%s) AND thread:%s" % (searchbuffer.querystring,
                                             thread.get_thread_id())
+        hitcount_before = ui.dbman.count_messages(testquery)
 
         def remove_thread():
             logging.debug('remove thread from result list: %s' % thread)
-            threadlist = ui.current_buffer.threadlist
-            if threadline_widget in threadlist:
-                threadlist.remove(threadline_widget)
-            ui.current_buffer.result_count -= thread.get_total_messages()
+            if threadline_widget in searchbuffer.threadlist:
+                # remove this thread from result list
+                searchbuffer.threadlist.remove(threadline_widget)
 
         def refresh():
             # remove thread from resultset if it doesn't match the search query
             # any more and refresh selected threadline otherwise
-            if ui.dbman.count_messages(testquery) == 0:
+            hitcount_after = ui.dbman.count_messages(testquery)
+            if hitcount_after == 0:
                 remove_thread()
-                ui.update()
             else:
                 threadline_widget.rebuild()
+            # update total result count
+            searchbuffer.result_count += (hitcount_after - hitcount_before)
+            ui.update()
 
         tags = filter(lambda x: x, self.tagsstring.split(','))
         try:
@@ -199,11 +206,3 @@ class TagCommand(Command):
         # flush index
         if self.flush:
             ui.apply_command(commands.globals.FlushCommand())
-
-        # refresh buffer.
-        # TODO: This shouldn't be necessary but apparently it is: without the
-        # following call, the buffer is not updated by the refresh callback
-        # (given as afterwards parm above) because
-        # ui.dbman.count_messages(testquery) doesn't return 0 as expected - and
-        # as it does here.
-        refresh()

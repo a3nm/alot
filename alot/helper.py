@@ -1,11 +1,16 @@
-# coding=utf-8
-from datetime import date
+# -*- coding: utf-8 -*-
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 from datetime import timedelta
+from datetime import datetime
 from collections import deque
 from string import strip
 import subprocess
+import shlex
 import email
 import os
+import re
 from email.mime.audio import MIMEAudio
 from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
@@ -17,7 +22,18 @@ from twisted.internet.protocol import ProcessProtocol
 from twisted.internet.defer import Deferred
 import StringIO
 import logging
+import tempfile
 
+
+def split_commandstring(cmdstring):
+    """
+    split command string into a list of strings to pass on to subprocess.Popen
+    and the like. This simply calls shlex.split but works also with unicode
+    bytestrings.
+    """
+    if isinstance(cmdstring, unicode):
+        cmdstring = cmdstring.encode('utf-8', errors='ignore')
+    return shlex.split(cmdstring)
 
 def safely_get(clb, E, on_error=''):
     """
@@ -193,28 +209,54 @@ def pretty_datetime(d):
     translates :class:`datetime` `d` to a "sup-style" human readable string.
 
     >>> now = datetime.now()
+    >>> now.strftime('%c')
+    'Sat 31 Mar 2012 14:47:26 '
     >>> pretty_datetime(now)
-    '09:31am'
-    >>> one_day_ago = datetime.today() - timedelta(1)
-    >>> pretty_datetime(one_day_ago)
-    'Yest. 9am'
-    >>> thirty_days_ago = datetime.today() - timedelta(30)
-    >>> pretty_datetime(thirty_days_ago)
-    'Nov 01'
-    >>> one_year_ago = datetime.today() - timedelta(356)
-    >>> pretty_datetime(one_year_ago)
-    'Dec 2010'
+    u'just now'
+    >>> pretty_datetime(now - timedelta(minutes=1))
+    u'1min ago'
+    >>> pretty_datetime(now - timedelta(hours=5))
+    u'5h ago'
+    >>> pretty_datetime(now - timedelta(hours=12))
+    u'02:54am'
+    >>> pretty_datetime(now - timedelta(days=1))
+    u'yest 02pm'
+    >>> pretty_datetime(now - timedelta(days=2))
+    u'Thu 02pm'
+    >>> pretty_datetime(now - timedelta(days=7))
+    u'Mar 24'
+    >>> pretty_datetime(now - timedelta(days=356))
+    u'Apr 2011'
     """
-    today = date.today()
-    if today == d.date():
-        string = d.strftime('%H:%M%P')
+    ampm = d.strftime('%P')
+    if len(ampm):
+        hourfmt = '%I' + ampm
+        hourminfmt = '%I:%M' + ampm
+    else:
+        hourfmt = '%Hh'
+        hourminfmt = '%H:%M'
+
+    now = datetime.now()
+    today = now.date()
+    if d.date() == today or d > now - timedelta(hours=6):
+        delta = datetime.now() - d
+        if delta.seconds < 60:
+            string = 'just now'
+        elif delta.seconds < 3600:
+            string = '%dmin ago' % (delta.seconds / 60)
+        elif delta.seconds < 6 * 3600:
+            string = '%dh ago' % (delta.seconds / 3600)
+        else:
+            string = d.strftime(hourminfmt)
     elif d.date() == today - timedelta(1):
-        string = 'Yest.%2d' % d.hour + d.strftime('%P')
+        string = d.strftime('yest ' + hourfmt)
+    elif d.date() > today - timedelta(7):
+        string = d.strftime('%a ' + hourfmt)
     elif d.year != today.year:
         string = d.strftime('%b %Y')
     else:
         string = d.strftime('%b %d')
-    return string
+    return string_decode(string, 'UTF-8')
 
 
 def call_cmd(cmdlist, stdin=None):
@@ -311,9 +353,14 @@ def guess_mimetype(blob):
     :returns: mime-type, falls back to 'application/octet-stream'
     :rtype: str
     """
+    mimetype = 'application/octet-stream'
     m = magic.open(magic.MAGIC_MIME_TYPE)
     m.load()
-    return m.buffer(blob) or 'application/octet-stream'
+    magictype = m.buffer(blob)
+    # libmagic does not always return proper mimetype strings, cf. issue #459
+    if re.match(r'\w+\/\w+', magictype):
+        mimetype = magictype
+    return mimetype
 
 
 def guess_encoding(blob):
@@ -396,3 +443,17 @@ def humanize_size(size):
         if size / factor < 1024:
             return format_string % (float(size) / factor)
     return format_string % (size / factor)
+
+
+def parse_mailcap_nametemplate(tmplate='%s'):
+    """this returns a prefix and suffix to be used
+    in the tempfile module for a given mailcap nametemplate string"""
+    nt_list = tmplate.split('%s')
+    template_prefix = ''
+    template_suffix = ''
+    if len(nt_list) == 2:
+        template_suffix = nt_list[1]
+        template_prefix = nt_list[0]
+    else:
+        template_suffix = tmplate
+    return (template_prefix, template_suffix)

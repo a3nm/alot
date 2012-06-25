@@ -1,3 +1,7 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
+import argparse
 import os
 import re
 import glob
@@ -8,12 +12,15 @@ from twisted.internet.defer import inlineCallbacks
 import datetime
 
 from alot.account import SendingMailFailed
+from alot.errors import GPGProblem
 from alot import buffers
 from alot import commands
+from alot import crypto
 from alot.commands import Command, registerCommand
 from alot.commands import globals
 from alot.helper import string_decode
 from alot.settings import settings
+from alot.utils.booleanaction import BooleanAction
 
 
 MODE = 'envelope'
@@ -130,9 +137,20 @@ class SendCommand(Command):
             else:
                 account = settings.get_accounts()[0]
 
+        clearme = ui.notify(u'constructing mail (GPG, attachments)\u2026',
+                            timeout=-1)
+
+        try:
+            mail = envelope.construct_mail()
+        except GPGProblem, e:
+            ui.clear_notify([clearme])
+            ui.notify(e.message, priority='error')
+            return
+
+        ui.clear_notify([clearme])
+
         # send
         clearme = ui.notify('sending..', timeout=-1)
-        mail = envelope.construct_mail()
 
         def afterwards(returnvalue):
             logging.debug('mail sent successfully')
@@ -164,10 +182,10 @@ class SendCommand(Command):
 
 
 @registerCommand(MODE, 'edit', arguments=[
-    (['--spawn'], {'action': 'store_true',
-                   'help':'force spawning of editor in a new terminal'}),
-    (['--no-refocus'], {'action': 'store_false', 'dest':'refocus',
-                        'help':'don\'t refocus envelope after editing'}),
+    (['--spawn'], {'action': BooleanAction, 'default':None,
+                   'help':'spawn editor in new terminal'}),
+    (['--refocus'], {'action': BooleanAction, 'default':True,
+                    'help':'refocus envelope after editing'}),
     ])
 class EditCommand(Command):
     """edit mail"""
@@ -255,7 +273,7 @@ class EditCommand(Command):
         # call pre-edit translate hook
         translate = settings.get_hook('pre_edit_translate')
         if translate:
-            bodytext = translate(bodytext, ui=ui, dbm=ui.dbman)
+            content = translate(content, ui=ui, dbm=ui.dbman)
 
         #write stuff to tempfile
         tf = tempfile.NamedTemporaryFile(delete=False, prefix='alot.')
@@ -317,3 +335,53 @@ class ToggleHeaderCommand(Command):
     """toggle display of all headers"""
     def apply(self, ui):
         ui.current_buffer.toggle_all_headers()
+
+
+@registerCommand(MODE, 'sign', forced={'action': 'sign'}, arguments=[
+    (['keyid'], {'nargs':argparse.REMAINDER, 'help':'which key id to use'})],
+    help='mark mail to be signed before sending')
+@registerCommand(MODE, 'unsign', forced={'action': 'unsign'},
+    help='mark mail not to be signed before sending')
+@registerCommand(MODE, 'togglesign', forced={'action': 'toggle'}, arguments=[
+    (['keyid'], {'nargs':argparse.REMAINDER, 'help':'which key id to use'})],
+    help='toggle sign status')
+class SignCommand(Command):
+    """toggle signing this email"""
+    def __init__(self, action=None, keyid=None, **kwargs):
+        """
+        :param action: whether to sign/unsign/toggle
+        :type action: str
+        :param keyid: which key id to use
+        :type keyid: str
+        """
+        self.action = action
+        self.keyid = keyid
+        Command.__init__(self, **kwargs)
+
+    def apply(self, ui):
+        sign = None
+        key = None
+        envelope = ui.current_buffer.envelope
+        # sign status
+        if self.action == 'sign':
+            sign = True
+        elif self.action == 'unsign':
+            sign = False
+        elif self.action == 'toggle':
+            sign = not envelope.sign
+        envelope.sign = sign
+
+        # try to find key if hint given as parameter
+        if sign:
+            if len(self.keyid) > 0:
+                keyid = str(' '.join(self.keyid))
+                try:
+                    key = crypto.get_key(keyid)
+                except GPGProblem, e:
+                    envelope.sign = False
+                    ui.notify(e.message, priority='error')
+                    return
+                envelope.sign_key = key
+
+        # reload buffer
+        ui.current_buffer.rebuild()

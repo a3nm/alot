@@ -1,15 +1,22 @@
+# Copyright (C) 2011-2012  Patrick Totzke <patricktotzke@gmail.com>
+# This file is released under the GNU GPL, version 3 or a later revision.
+# For further details see the COPYING file
 import os
 import email
 import re
 import email.charset as charset
 charset.add_charset('utf-8', charset.QP, charset.QP, 'utf-8')
+from email.encoders import encode_7or8bit
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 
 from alot import __version__
 import logging
 import alot.helper as helper
+import alot.crypto as crypto
 from alot.settings import settings
+from alot.errors import GPGProblem
 
 from attachment import Attachment
 from utils import encode_header
@@ -18,7 +25,7 @@ from utils import encode_header
 class Envelope(object):
     """a message that is not yet sent and still editable"""
     def __init__(self, template=None, bodytext=u'', headers={}, attachments=[],
-            sign=False, encrypt=False):
+            sign=False, sign_key=None, encrypt=False):
         """
         :param template: if not None, the envelope will be initialised by
                          :meth:`parsing <parse_template>` this string before
@@ -44,6 +51,7 @@ class Envelope(object):
         self.headers.update(headers)
         self.attachments = list(attachments)
         self.sign = sign
+        self.sign_key = sign_key
         self.encrypt = encrypt
         self.sent_time = None
         self.modified_since_sent = False
@@ -133,15 +141,62 @@ class Envelope(object):
         compiles the information contained in this envelope into a
         :class:`email.Message`.
         """
-        # build body text part
-        textpart = MIMEText(self.body.encode('utf-8'), 'plain', 'utf-8')
+        # Build body text part. To properly sign/encrypt messages later on, we
+        # convert the text to its canonical format (as per RFC 2015).
+        canonical_format = self.body.encode('utf-8')
+        canonical_format = canonical_format.replace('\\t', ' '*4)
+        textpart = MIMEText(canonical_format, 'plain', 'utf-8')
 
         # wrap it in a multipart container if necessary
-        if self.attachments or self.sign or self.encrypt:
-            msg = MIMEMultipart()
-            msg.attach(textpart)
+        if self.attachments:
+            inner_msg = MIMEMultipart()
+            inner_msg.attach(textpart)
+            # add attachments
+            for a in self.attachments:
+                inner_msg.attach(a.get_mime_representation())
         else:
-            msg = textpart
+            inner_msg = textpart
+
+        if self.sign:
+            plaintext = crypto.email_as_string(inner_msg)
+            logging.info('signing plaintext: ' + plaintext)
+
+            try:
+                signatures, signature_str = crypto.detached_signature_for(
+                        plaintext, self.sign_key)
+                if len(signatures) != 1:
+                    raise GPGProblem(("Could not sign message "
+                            "(GPGME did not return a signature)"))
+            except gpgme.GpgmeError as e:
+                if e.code == gpgme.ERR_BAD_PASSPHRASE:
+                    # If GPG_AGENT_INFO is unset or empty, the user just does
+                    # not have gpg-agent running (properly).
+                    if os.environ.get('GPG_AGENT_INFO', '').strip() == '':
+                        raise GPGProblem(("Bad passphrase and "
+                                "GPG_AGENT_INFO not set. Please setup "
+                                "gpg-agent."))
+                    else:
+                        raise GPGProblem(("Bad passphrase. Is "
+                                "gpg-agent running?"))
+                raise GPGProblem(str(e))
+
+            micalg = crypto.RFC3156_micalg_from_algo(signatures[0].hash_algo)
+            outer_msg = MIMEMultipart('signed', micalg=micalg,
+                            protocol='application/pgp-signature')
+
+            # wrap signature in MIMEcontainter
+            signature_mime = MIMEApplication(_data=signature_str,
+                _subtype='pgp-signature; name="signature.asc"',
+                _encoder=encode_7or8bit)
+            signature_mime['Content-Description'] = 'signature'
+            signature_mime.set_charset('us-ascii')
+
+            # add signed message and signature to outer message
+            outer_msg.attach(inner_msg)
+            outer_msg.attach(signature_mime)
+            outer_msg['Content-Disposition'] = 'inline'
+        else:
+            outer_msg = inner_msg
 
         headers = self.headers.copy()
         # add Message-ID
@@ -159,13 +214,9 @@ class Envelope(object):
         # copy headers from envelope to mail
         for k, vlist in headers.items():
             for v in vlist:
-                msg[k] = encode_header(k, v)
+                outer_msg[k] = encode_header(k, v)
 
-        # add attachments
-        for a in self.attachments:
-            msg.attach(a.get_mime_representation())
-
-        return msg
+        return outer_msg
 
     def parse_template(self, tmp, reset=False, only_body=False):
         """parses a template or user edited string to fills this envelope.
@@ -204,6 +255,9 @@ class Envelope(object):
                     if key and value:  # save old one from stack
                         self.add(key, value)  # save
                     key, value = line.strip().split(':', 1)  # parse new pair
+                    # strip spaces, otherwise we end up having " foo" as value
+                    # of "Subject: foo"
+                    value = value.strip()
                 elif key and value:  # append new line without key prefix
                     value += line
             if key and value:  # save last one if present
