@@ -5,13 +5,13 @@ import sys
 import logging
 import os
 
-from settings import settings, ConfigError
-from db import DBManager
-from ui import UI
+from alot.settings import settings
+from alot.settings.errors import ConfigError
+from alot.db.manager import DBManager
+from alot.ui import UI
 import alot.commands as commands
-from commands import *
+from alot.commands import *
 from alot.commands import CommandParseError
-import alot
 
 from twisted.python import usage
 
@@ -152,10 +152,6 @@ def main():
             break  # use only the first
 
     try:
-        if not alotconfig:
-            alotconfig = configfiles[0]
-            settings.write_default_config(alotconfig)
-
         settings.read_config(alotconfig)
         settings.read_notmuch_config(notmuchconfig)
     except (ConfigError, OSError, IOError), e:

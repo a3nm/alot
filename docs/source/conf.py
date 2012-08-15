@@ -19,8 +19,12 @@ class Mock(object):
     def __getattr__(self, name):
         return Mock() if name not in ('__file__', '__path__') else '/dev/null'
 
-MOCK_MODULES = ['notmuch', 'notmuch.globals',
-                'twisted', 'twisted.internet',
+class MockModule(object):
+    @classmethod
+    def __getattr__(self, name):
+        return Mock if name not in ('__file__', '__path__') else '/dev/null'
+
+MOCK_MODULES = ['twisted', 'twisted.internet',
                 'twisted.internet.defer',
                 'twisted.python',
                 'twisted.python.failure',
@@ -29,7 +33,10 @@ MOCK_MODULES = ['notmuch', 'notmuch.globals',
                 'magic',
                 'gpgme',
                 'argparse']
+MOCK_DIRTY = ['notmuch']
 for mod_name in MOCK_MODULES:
+    sys.modules[mod_name] = MockModule()
+for mod_name in MOCK_DIRTY:
     sys.modules[mod_name] = Mock()
 
 # end of readthedocs.org hack
@@ -93,7 +100,8 @@ release = version
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
-exclude_patterns = []
+exclude_patterns = [
+]
 
 # The reST default role (used for this markup: `text`) to use for all documents.
 #default_role = None
@@ -149,7 +157,7 @@ html_title = 'Alot User Manual'
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
+#html_static_path = ['_static']
 
 # If not '', a 'Last updated on:' timestamp is inserted at every page bottom,
 # using the given strftime format.

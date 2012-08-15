@@ -4,14 +4,16 @@
 import urwid
 import logging
 from twisted.internet import reactor, defer
-import sys
 
 from settings import settings
 from buffers import BufferlistBuffer
 import commands
 from commands import commandfactory
 from alot.commands import CommandParseError
-import widgets
+from alot.helper import string_decode
+from alot.widgets.utils import CatchKeyWidgetWrap
+from alot.widgets.globals import CompleteEdit
+from alot.widgets.globals import ChoiceWidget
 
 
 class InputWrap(urwid.WidgetWrap):
@@ -99,9 +101,9 @@ class UI(object):
         self.mainframe_themed = urwid.AttrMap(self.mainframe, global_att)
         self.inputwrap = InputWrap(self, self.mainframe_themed)
         self.mainloop = urwid.MainLoop(self.inputwrap,
-                handle_mouse=False,
-                event_loop=urwid.TwistedEventLoop(),
-                unhandled_input=self.unhandeled_input)
+                                       handle_mouse=False,
+                                       event_loop=urwid.TwistedEventLoop(),
+                                       unhandled_input=self.unhandeled_input)
         self.mainloop.screen.set_terminal_properties(colors=colourmode)
 
         self.show_statusbar = settings.get('show_statusbar')
@@ -130,8 +132,8 @@ class UI(object):
                 logging.debug('called')
                 afterwards()
         logging.debug('relay: %s' % relay_rest)
-        helpwrap = widgets.CatchKeyWidgetWrap(w, key, on_catch=oe,
-                                              relay_rest=relay_rest)
+        helpwrap = CatchKeyWidgetWrap(w, key, on_catch=oe,
+                                      relay_rest=relay_rest)
         self.inputwrap.set_root(helpwrap)
         self.inputwrap.select_cancel_only = not relay_rest
 
@@ -165,7 +167,7 @@ class UI(object):
 
         #set up widgets
         leftpart = urwid.Text(prefix, align='left')
-        editpart = widgets.CompleteEdit(completer, on_exit=select_or_cancel,
+        editpart = CompleteEdit(completer, on_exit=select_or_cancel,
                                 edit_text=text, history=history)
 
         for i in range(tab):  # hit some tabs
@@ -204,7 +206,12 @@ class UI(object):
 
     def buffer_open(self, buf):
         """register and focus new :class:`~alot.buffers.Buffer`."""
-        self.buffers.append(buf)
+        if self.current_buffer is not None:
+            offset = settings.get('bufferclose_focus_offset') * -1
+            currentindex = self.buffers.index(self.current_buffer)
+            self.buffers.insert(currentindex + offset, buf)
+        else:
+            self.buffers.append(buf)
         self.buffer_focus(buf)
 
     def buffer_close(self, buf):
@@ -316,8 +323,8 @@ class UI(object):
 
         #set up widgets
         msgpart = urwid.Text(message)
-        choicespart = widgets.ChoiceWidget(choices, callback=select_or_cancel,
-                                           select=select, cancel=cancel)
+        choicespart = ChoiceWidget(choices, callback=select_or_cancel,
+                                   select=select, cancel=cancel)
 
         # build widget
         if msg_position == 'left':
@@ -423,13 +430,27 @@ class UI(object):
 
     def build_statusbar(self):
         """construct and return statusbar widget"""
-        if self.current_buffer is not None:
-            idx = self.buffers.index(self.current_buffer)
-            lefttxt = '%d: %s' % (idx, self.current_buffer)
-        else:
-            lefttxt = '[no buffers]'
+        info = {}
+        cb = self.current_buffer
+        btype = None
+
+        if cb is not None:
+            info = cb.get_info()
+            btype = cb.modename
+            info['buffer_no'] = self.buffers.index(cb)
+            info['buffer_type'] = btype
+        info['total_messages'] = self.dbman.count_messages('*')
+        info['pending_writes'] = len(self.dbman.writequeue)
+
+        lefttxt = righttxt = u''
+        if cb is not None:
+            lefttxt, righttxt = settings.get(btype + '_statusbar', (u'', u''))
+            lefttxt = string_decode(lefttxt, 'UTF-8')
+            lefttxt = lefttxt.format(**info)
+            righttxt = string_decode(righttxt, 'UTF-8')
+            righttxt = righttxt.format(**info)
+
         footerleft = urwid.Text(lefttxt, align='left')
-        righttxt = 'total messages: %d' % self.dbman.count_messages('*')
         pending_writes = len(self.dbman.writequeue)
         if pending_writes > 0:
             righttxt = ('|' * pending_writes) + ' ' + righttxt

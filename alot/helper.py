@@ -22,7 +22,6 @@ from twisted.internet.protocol import ProcessProtocol
 from twisted.internet.defer import Deferred
 import StringIO
 import logging
-import tempfile
 
 
 def split_commandstring(cmdstring):
@@ -34,6 +33,7 @@ def split_commandstring(cmdstring):
     if isinstance(cmdstring, unicode):
         cmdstring = cmdstring.encode('utf-8', errors='ignore')
     return shlex.split(cmdstring)
+
 
 def safely_get(clb, E, on_error=''):
     """
@@ -418,7 +418,7 @@ def tag_cmp(a, b):
     Sorting tags using this function puts all tags of length 1 at the
     beginning. This groups all tags mapped to unicode characters.
     '''
-    if min(len(a), len(b)) == 1:
+    if min(len(a), len(b)) == 1 and max(len(a), len(b)) > 1:
         return cmp(len(a), len(b))
     else:
         return cmp(a.lower(), b.lower())

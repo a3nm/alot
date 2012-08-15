@@ -5,7 +5,7 @@
 
 User Manual
 ===========
-.. include:: description.rst
+.. include:: description
 
 .. toctree::
    :maxdepth: 2
@@ -17,3 +17,8 @@ User Manual
    crypto/index
    api/index
    faq
+
+.. toctree::
+   :hidden:
+
+   manpage

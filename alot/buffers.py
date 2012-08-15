@@ -2,14 +2,21 @@
 # This file is released under the GNU GPL, version 3 or a later revision.
 # For further details see the COPYING file
 import urwid
+import os
 from notmuch import NotmuchError
 
-import widgets
 from settings import settings
 import commands
 from walker import PipeWalker
 from helper import shorten_author_string
 from db.errors import NonexistantObjectError
+
+from alot.widgets.globals import TagWidget
+from alot.widgets.globals import HeadersList
+from alot.widgets.globals import AttachmentWidget
+from alot.widgets.bufferlist import BufferlineWidget
+from alot.widgets.search import ThreadlineWidget
+from alot.widgets.thread import MessageWidget
 
 
 class Buffer(object):
@@ -38,8 +45,12 @@ class Buffer(object):
             return self.body.keypress(size, key)
 
     def cleanup(self):
-        """called before buffer is dismissed"""
+        """called before buffer is closed"""
         pass
+
+    def get_info(self):
+        """return dict of meta infos about this buffer"""
+        return {}
 
 
 class BufferlistBuffer(Buffer):
@@ -71,14 +82,14 @@ class BufferlistBuffer(Buffer):
         lines = list()
         displayedbuffers = filter(self.filtfun, self.ui.buffers)
         for (num, b) in enumerate(displayedbuffers):
-            line = widgets.BufferlineWidget(b)
+            line = BufferlineWidget(b)
             if (num % 2) == 0:
                 attr = settings.get_theming_attribute('bufferlist',
-                                                      'results_even')
+                                                      'line_even')
             else:
-                attr = settings.get_theming_attribute('bufferlist',
-                                                      'results_odd')
-            focus_att = settings.get_theming_attribute('bufferlist', 'focus')
+                attr = settings.get_theming_attribute('bufferlist', 'line_odd')
+            focus_att = settings.get_theming_attribute('bufferlist',
+                                                       'line_focus')
             buf = urwid.AttrMap(line, attr, focus_att)
             num = urwid.Text('%3d:' % self.index_of(b))
             lines.append(urwid.Columns([('fixed', 4, num), buf]))
@@ -111,6 +122,15 @@ class EnvelopeBuffer(Buffer):
         to = self.envelope.get('To', fallback='unset')
         return '[envelope] to: %s' % (shorten_author_string(to, 400))
 
+    def get_info(self):
+        info = {}
+        info['to'] = self.envelope.get('To', fallback='unset')
+        return info
+
+    def cleanup(self):
+        if self.envelope.tmpfile:
+            os.unlink(self.envelope.tmpfile.name)
+
     def rebuild(self):
         displayed_widgets = []
         hidden = settings.get('envelope_headers_blacklist')
@@ -132,14 +152,15 @@ class EnvelopeBuffer(Buffer):
         # add header list widget iff header values exists
         if lines:
             key_att = settings.get_theming_attribute('envelope', 'header_key')
-            value_att = settings.get_theming_attribute('envelope', 'header_value')
-            self.header_wgt = widgets.HeadersList(lines, key_att, value_att)
+            value_att = settings.get_theming_attribute('envelope',
+                                                       'header_value')
+            self.header_wgt = HeadersList(lines, key_att, value_att)
             displayed_widgets.append(self.header_wgt)
 
         #display attachments
         lines = []
         for a in self.envelope.attachments:
-            lines.append(widgets.AttachmentWidget(a, selectable=False))
+            lines.append(AttachmentWidget(a, selectable=False))
         if lines:
             self.attachment_wgt = urwid.Pile(lines)
             displayed_widgets.append(self.attachment_wgt)
@@ -177,6 +198,13 @@ class SearchBuffer(Buffer):
         return formatstring % (self.querystring, self.result_count,
                                's' * (not (self.result_count == 1)))
 
+    def get_info(self):
+        info = {}
+        info['querystring'] = self.querystring
+        info['result_count'] = self.result_count
+        info['result_count_positive'] = 's' * (not (self.result_count == 1))
+        return info
+
     def cleanup(self):
         self.kill_filler_process()
 
@@ -210,7 +238,7 @@ class SearchBuffer(Buffer):
             self.body = self.listbox
             return
 
-        self.threadlist = PipeWalker(self.pipe, widgets.ThreadlineWidget,
+        self.threadlist = PipeWalker(self.pipe, ThreadlineWidget,
                                      dbman=self.dbman)
 
         self.listbox = urwid.ListBox(self.threadlist)
@@ -250,6 +278,14 @@ class ThreadBuffer(Buffer):
                                                self.message_count,
                                                's' * (self.message_count > 1))
 
+    def get_info(self):
+        info = {}
+        info['subject'] = self.thread.get_subject()
+        info['authors'] = self.thread.get_authors_string()
+        info['tid'] = self.thread.get_thread_id()
+        info['message_count'] = self.message_count
+        return info
+
     def get_selected_thread(self):
         """returns the displayed :class:`~alot.db.Thread`"""
         return self.thread
@@ -288,9 +324,9 @@ class ThreadBuffer(Buffer):
             childcount[p] -= 1
 
             bars.append(childcount[p] > 0)
-            mwidget = widgets.MessageWidget(m, even=(num % 2 == 0),
-                                            depth=depth,
-                                            bars_at=bars)
+            mwidget = MessageWidget(m, even=(num % 2 == 0),
+                                    depth=depth,
+                                    bars_at=bars)
             msglines.append(mwidget)
 
         self.body = urwid.ListBox(msglines)
@@ -360,13 +396,22 @@ class TagListBuffer(Buffer):
         displayedtags = sorted(filter(self.filtfun, self.tags),
                                key=unicode.lower)
         for (num, b) in enumerate(displayedtags):
-            tw = widgets.TagWidget(b)
+            if (num % 2) == 0:
+                attr = settings.get_theming_attribute('taglist', 'line_even')
+            else:
+                attr = settings.get_theming_attribute('taglist', 'line_odd')
+            focus_att = settings.get_theming_attribute('taglist', 'line_focus')
+
+            tw = TagWidget(b, attr, focus_att)
             rows = [('fixed', tw.width(), tw)]
             if tw.hidden:
-                rows.append(urwid.Text('[hidden]'))
+                rows.append(urwid.Text(b + ' [hidden]'))
             elif tw.translated is not b:
                 rows.append(urwid.Text('(%s)' % b))
-            lines.append(urwid.Columns(rows, dividechars=1))
+            line = urwid.Columns(rows, dividechars=1)
+            line = urwid.AttrMap(line, attr, focus_att)
+            lines.append(line)
+
         self.taglist = urwid.ListBox(urwid.SimpleListWalker(lines))
         self.body = self.taglist
 
@@ -375,5 +420,5 @@ class TagListBuffer(Buffer):
     def get_selected_tag(self):
         """returns selected tagstring"""
         (cols, pos) = self.taglist.get_focus()
-        tagwidget = cols.get_focus()
+        tagwidget = cols.original_widget.get_focus()
         return tagwidget.get_tag()

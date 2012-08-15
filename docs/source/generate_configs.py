@@ -6,8 +6,8 @@ from alot.commands import COMMANDS
 from configobj import ConfigObj
 from validate import Validator
 import re
-NOTE = """..
-    CAUTION: THIS FILE IS AUTO-GENERATED
+NOTE = """
+.. CAUTION: THIS FILE IS AUTO-GENERATED
     from the inline comments of specfile %s.
 
     If you want to change its content make your changes
@@ -49,7 +49,7 @@ def rewrite_entries(config, path, specpath, sec=None, sort=False):
         if default != None:
             default = default.replace('*','\\*')
             if etype in ['string', 'string_list', 'gpg_key_hint'] and default != 'None':
-                description += '    :default: `%s`\n\n' % (default)
+                description += '    :default: "%s"\n\n' % (default)
             else:
                 description += '    :default: %s\n\n' % (default)
         file.write(description)
@@ -60,9 +60,9 @@ if __name__ == "__main__":
     config = ConfigObj(None, configspec=specpath, stringify=False, list_values=False)
     config.validate(Validator())
 
-    alotrc_table_file = os.path.join(HERE, 'configuration', 'alotrc_table.rst')
+    alotrc_table_file = os.path.join(HERE, 'configuration', 'alotrc_table')
     rewrite_entries(config.configspec, alotrc_table_file, 'defaults/alot.rc.spec', sort=True)
 
-    rewrite_entries(config, os.path.join(HERE, 'configuration', 'accounts_table.rst'),
+    rewrite_entries(config, os.path.join(HERE, 'configuration', 'accounts_table'),
                     'defaults/alot.rc.spec',
                     sec=config.configspec['accounts']['__many__'])

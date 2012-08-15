@@ -18,16 +18,14 @@ from alot.completion import CommandLineCompleter
 from alot.commands import CommandParseError
 from alot.commands import commandfactory
 from alot import buffers
-from alot import widgets
+from alot.widgets.utils import DialogBox
 from alot import helper
-from alot import crypto
 from alot.db.errors import DatabaseLockedError
 from alot.completion import ContactsCompleter
 from alot.completion import AccountCompleter
 from alot.db.envelope import Envelope
 from alot import commands
 from alot.settings import settings
-from alot.errors import GPGProblem
 from alot.helper import split_commandstring
 from alot.utils.booleanaction import BooleanAction
 
@@ -41,7 +39,7 @@ class ExitCommand(Command):
     def apply(self, ui):
         if settings.get('bug_on_exit'):
             if (yield ui.choice('realy quit?', select='yes', cancel='no',
-                               msg_position='left')) == 'no':
+                                msg_position='left')) == 'no':
                 return
         for b in ui.buffers:
             b.cleanup()
@@ -50,7 +48,7 @@ class ExitCommand(Command):
 
 @registerCommand(MODE, 'search', usage='search query', arguments=[
     (['--sort'], {'help':'sort order', 'choices':[
-                   'oldest_first', 'newest_first', 'message_id', 'unsorted']}),
+                  'oldest_first', 'newest_first', 'message_id', 'unsorted']}),
     (['query'], {'nargs':argparse.REMAINDER, 'help':'search string'})])
 class SearchCommand(Command):
     """open a new search buffer"""
@@ -174,11 +172,14 @@ class ExternalCommand(Command):
             logging.debug('got: %s' % res)
             cmd, shell, self.in_thread = res
         # otherwise if spawn requested and X11 is running
-        elif spawn and 'DISPLAY' in os.environ:
-            term_cmd = settings.get('terminal_cmd', '')
-            logging.info('spawn in terminal: %s' % term_cmd)
-            termcmdlist = split_commandstring(term_cmd)
-            cmd = termcmdlist + cmd
+        elif spawn:
+            if 'DISPLAY' in os.environ:
+                term_cmd = settings.get('terminal_cmd', '')
+                logging.info('spawn in terminal: %s' % term_cmd)
+                termcmdlist = split_commandstring(term_cmd)
+                cmd = termcmdlist + cmd
+            else:
+                thread = False
 
         self.cmdlist = cmd
         self.stdin = stdin
@@ -215,7 +216,7 @@ class ExternalCommand(Command):
 
         def thread_code(*args):
             try:
-                if stdin == None:
+                if stdin is None:
                     proc = subprocess.Popen(self.cmdlist, shell=self.shell,
                                             stderr=subprocess.PIPE)
                     ret = proc.wait()
@@ -287,7 +288,7 @@ class EditCommand(ExternalCommand):
                                  **kwargs)
 
     def apply(self, ui):
-        if self.cmdlist == None:
+        if self.cmdlist is None:
             ui.notify('no editor set', priority='error')
         else:
             return ExternalCommand.apply(self, ui)
@@ -302,27 +303,63 @@ class PythonShellCommand(Command):
         ui.mainloop.screen.start()
 
 
-@registerCommand(MODE, 'bclose')
+@registerCommand(MODE, 'call', arguments=[
+    (['command'], {'help':'python command string to call'})])
+class CallCommand(Command):
+    """ Executes python code """
+    def __init__(self, command, **kwargs):
+        """
+        :param command: python command string to call
+        :type command: str
+        """
+        Command.__init__(self, **kwargs)
+        self.command = command
+
+    def apply(self, ui):
+        try:
+            exec self.command
+        except Exception as e:
+            logging.exception(e)
+            msg = 'an error occurred during execution of "%s":\n'\
+                  '%s\nSee the logfile for details'
+            ui.notify(msg % e, priority='error')
+
+
+@registerCommand(MODE, 'bclose', arguments=[
+    (['--force'], {'action': 'store_true',
+                   'help': 'never ask for confirmation'})])
 class BufferCloseCommand(Command):
     """close a buffer"""
-    def __init__(self, buffer=None, **kwargs):
+    def __init__(self, buffer=None, force=False, **kwargs):
         """
         :param buffer: the buffer to close or None for current
         :type buffer: `alot.buffers.Buffer`
+        :param force: force buffer close
+        :type force: bool
         """
         self.buffer = buffer
+        self.force = force
         Command.__init__(self, **kwargs)
 
+    @inlineCallbacks
     def apply(self, ui):
-        if self.buffer == None:
+        if self.buffer is None:
             self.buffer = ui.current_buffer
+
+        if (isinstance(self.buffer, buffers.EnvelopeBuffer) and
+                not self.buffer.envelope.sent_time):
+            if (not self.force and
+                    (yield ui.choice('close without sending?', select='yes',
+                                cancel='no', msg_position='left')) == 'no'):
+                return
+
         if len(ui.buffers) == 1:
             if settings.get('quit_on_last_bclose'):
                 logging.info('closing the last buffer, exiting')
                 ui.apply_command(ExitCommand())
             else:
                 logging.info('not closing last remaining buffer as '
-                               'global.quit_on_last_bclose is set to False')
+                             'global.quit_on_last_bclose is set to False')
         else:
             ui.buffer_close(self.buffer)
 
@@ -454,7 +491,7 @@ class HelpCommand(Command):
             # mode specific maps
             if modemaps:
                 linewidgets.append(urwid.Text((section_att,
-                                    '\n%s-mode specific maps' % ui.mode)))
+                                               '\n%s-mode specific maps' % ui.mode)))
                 for (k, v) in modemaps.items():
                     line = urwid.Columns([('fixed', keycolumnwidth,
                                            urwid.Text((text_att, k))),
@@ -474,12 +511,12 @@ class HelpCommand(Command):
             ckey = 'cancel'
             titletext = 'Bindings Help (%s cancels)' % ckey
 
-            box = widgets.DialogBox(body, titletext,
-                                    bodyattr=text_att,
-                                    titleattr=title_att)
+            box = DialogBox(body, titletext,
+                            bodyattr=text_att,
+                            titleattr=title_att)
 
             # put promptwidget as overlay on main widget
-            overlay = urwid.Overlay(box, ui.mainframe, 'center',
+            overlay = urwid.Overlay(box, ui.mainframe_themed, 'center',
                                     ('relative', 70), 'middle',
                                     ('relative', 70))
             ui.show_as_root_until_keypress(overlay, 'cancel')
@@ -555,7 +592,7 @@ class ComposeCommand(Command):
 
     @inlineCallbacks
     def apply(self, ui):
-        if self.envelope == None:
+        if self.envelope is None:
             self.envelope = Envelope()
         if self.template is not None:
             #get location of tempsdir, containing msg templates
@@ -647,7 +684,7 @@ class ComposeCommand(Command):
                         ui.notify('could not locate signature: %s' % sig,
                                   priority='error')
                         if (yield ui.choice('send without signature',
-                                        select='yes', cancel='no')) == 'no':
+                                            select='yes', cancel='no')) == 'no':
                             return
 
         # Figure out whether we should GPG sign messages by default
@@ -665,23 +702,23 @@ class ComposeCommand(Command):
             logging.debug(allbooks)
             if account is not None:
                 abooks = settings.get_addressbooks(order=[account],
-                                                    append_remaining=allbooks)
+                                                   append_remaining=allbooks)
                 logging.debug(abooks)
                 completer = ContactsCompleter(abooks)
             else:
                 completer = None
             to = yield ui.prompt('To',
                                  completer=completer)
-            if to == None:
+            if to is None:
                 ui.notify('canceled')
                 return
             self.envelope.add('To', to.strip(' \t\n,'))
 
         if settings.get('ask_subject') and \
-           not 'Subject' in self.envelope.headers:
+                not 'Subject' in self.envelope.headers:
             subject = yield ui.prompt('Subject')
             logging.debug('SUBJECT: "%s"' % subject)
-            if subject == None:
+            if subject is None:
                 ui.notify('canceled')
                 return
             self.envelope.add('Subject', subject)
@@ -693,7 +730,7 @@ class ComposeCommand(Command):
                     logging.debug('attaching: ' + a)
 
         cmd = commands.envelope.EditCommand(envelope=self.envelope,
-                spawn=self.force_spawn, refocus=False)
+                                            spawn=self.force_spawn, refocus=False)
         ui.apply_command(cmd)
 
 

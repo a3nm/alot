@@ -15,6 +15,7 @@ from alot import __version__
 import logging
 import alot.helper as helper
 import alot.crypto as crypto
+import gpgme
 from alot.settings import settings
 from alot.errors import GPGProblem
 
@@ -41,6 +42,7 @@ class Envelope(object):
         assert isinstance(bodytext, unicode)
         self.headers = {}
         self.body = None
+        self.tmpfile = None
         logging.debug('TEMPLATE: %s' % template)
         if template:
             self.parse_template(template)
@@ -159,7 +161,7 @@ class Envelope(object):
 
         if self.sign:
             plaintext = crypto.email_as_string(inner_msg)
-            logging.info('signing plaintext: ' + plaintext)
+            logging.debug('signing plaintext: ' + plaintext)
 
             try:
                 signatures, signature_str = crypto.detached_signature_for(
