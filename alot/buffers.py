@@ -49,7 +49,10 @@ class Buffer(object):
         pass
 
     def get_info(self):
-        """return dict of meta infos about this buffer"""
+        """
+        return dict of meta infos about this buffer.
+        This can be requested to be displayed in the statusbar.
+        """
         return {}
 
 
@@ -154,7 +157,8 @@ class EnvelopeBuffer(Buffer):
             key_att = settings.get_theming_attribute('envelope', 'header_key')
             value_att = settings.get_theming_attribute('envelope',
                                                        'header_value')
-            self.header_wgt = HeadersList(lines, key_att, value_att)
+            gaps_att = settings.get_theming_attribute('envelope', 'header')
+            self.header_wgt = HeadersList(lines, key_att, value_att, gaps_att)
             displayed_widgets.append(self.header_wgt)
 
         #display attachments

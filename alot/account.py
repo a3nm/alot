@@ -14,13 +14,16 @@ class SendingMailFailed(RuntimeError):
     pass
 
 
+class StoreMailError(Exception):
+    pass
+
+
 class Account(object):
     """
     Datastructure that represents an email account. It manages this account's
     settings, can send and store mails to maildirs (drafts/send).
 
     .. note::
-
         This is an abstract class that leaves :meth:`send_mail` unspecified.
         See :class:`SendmailAccount` for a subclass that uses a sendmail
         command to send out mails.
@@ -70,7 +73,8 @@ class Account(object):
 
     def store_mail(self, mbx, mail):
         """
-        stores given mail in mailbox. If mailbox is maildir, set the S-flag.
+        stores given mail in mailbox. If mailbox is maildir, set the S-flag and
+        return path to newly added mail. Oherwise this will return `None`.
 
         :param mbx: mailbox to use
         :type mbx: :class:`mailbox.Mailbox`
@@ -79,6 +83,7 @@ class Account(object):
         :returns: absolute path of mail-file for Maildir or None if mail was
                   successfully stored
         :rtype: str or None
+        :raises: StoreMailError
         """
         if not isinstance(mbx, mailbox.Mailbox):
             logging.debug('Not a mailbox')
@@ -93,10 +98,13 @@ class Account(object):
             logging.debug('no Maildir')
             msg = mailbox.Message(mail)
 
-        message_id = mbx.add(msg)
-        mbx.flush()
-        mbx.unlock()
-        logging.debug('got id : %s' % id)
+        try:
+            message_id = mbx.add(msg)
+            mbx.flush()
+            mbx.unlock()
+            logging.debug('got mailbox msg id : %s' % message_id)
+        except Exception as e:
+            raise StoreMailError(e)
 
         path = None
         # add new Maildir message to index and add tags

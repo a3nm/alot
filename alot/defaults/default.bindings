@@ -1,8 +1,10 @@
+up = move up
+down = move down
+page up = move page up
+page down = move page down
 j = move down
 k = move up
 ' ' = move page down
-esc = cancel
-enter = select
 @ = refresh
 ? = help bindings
 I = search tag:inbox AND NOT tag:killed
@@ -21,9 +23,10 @@ q = exit
 
 [bufferlist]
     x = close
-    select = openfocussed
+    enter = open
 
 [search]
+    enter = select
     a = toggletags inbox
     & = toggletags killed
     ! = toggletags flagged
@@ -37,16 +40,19 @@ q = exit
     y = send
     P = save
     s = 'refine Subject'
+    f = prompt 'set From '
     t = 'refine To'
     b = 'refine Bcc'
     c = 'refine Cc'
     S = togglesign
-    select = edit
+    enter = edit
     H = toggleheaders
 
 [taglist]
+    enter = select
 
 [thread]
+    enter = select
     C = fold --all
     E = unfold --all
     c = fold

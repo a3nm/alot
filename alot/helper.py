@@ -24,6 +24,23 @@ import StringIO
 import logging
 
 
+def split_commandline(s, comments=False, posix=True):
+    """
+    splits semi-colon separated commandlines
+    """
+    # shlex seems to remove unescaped quotes
+    s = s.replace('\'', '\\\'')
+    # encode s to utf-8 for shlex
+    if isinstance(s, unicode):
+        s = s.encode('utf-8')
+    lex = shlex.shlex(s, posix=posix)
+    lex.whitespace_split = True
+    lex.whitespace = ';'
+    if not comments:
+        lex.commenters = ''
+    return list(lex)
+
+
 def split_commandstring(cmdstring):
     """
     split command string into a list of strings to pass on to subprocess.Popen
@@ -38,7 +55,7 @@ def split_commandstring(cmdstring):
 def safely_get(clb, E, on_error=''):
     """
     returns result of :func:`clb` and falls back to `on_error`
-    in case `E` is raised.
+    in case exception `E` is raised.
 
     :param clb: function to evaluate
     :type clb: callable
@@ -95,8 +112,9 @@ def string_sanitize(string, tab_width=8):
 
 
 def string_decode(string, enc='ascii'):
-    """safely decodes string to unicode bytestring,
-    respecting `enc` as a hint"""
+    """
+    safely decodes string to unicode bytestring, respecting `enc` as a hint.
+    """
 
     if enc is None:
         enc = 'ascii'
@@ -110,6 +128,7 @@ def string_decode(string, enc='ascii'):
 
 
 def shorten(string, maxlen):
+    """shortens string if longer than maxlen, appending ellipsis"""
     if maxlen > 1 and len(string) > maxlen:
         string = string[:maxlen - 1] + u'\u2026'
     return string[:maxlen]
@@ -128,16 +147,13 @@ def shorten_author_string(authors_string, maxlength):
 
       - First author is always shown (if too long is shorten with ellipsis)
 
-      - If possible, last author is also shown (if too long, uses
-        ellipsis)
+      - If possible, last author is also shown (if too long, uses ellipsis)
 
       - If there are more than 2 authors in the thread, show the
-        maximum of them. More recent senders have more priority (Is
-        the list of authors already sorted by the date of msgs????)
+        maximum of them. More recent senders have higher priority.
 
       - If it is finally necessary to hide any author, an ellipsis
         between first and next authors is added.
-
 
     >>> authors = u'King Kong, Mucho Muchacho, Jaime Huerta, Flash Gordon'
     >>> print shorten_author_string(authors, 60)
@@ -184,8 +200,8 @@ def shorten_author_string(authors_string, maxlength):
     # that if any author will be hidden, and ellipsis should be added
     while authors and remaining_length >= 3:
         au = authors.pop()
-        if len(au) > 1 and (remaining_length == 3 or
-                          (authors and remaining_length < 7)):
+        if len(au) > 1 and (remaining_length == 3 or (authors and
+                                                      remaining_length < 7)):
             authors_chain.appendleft(u'\u2026')
             break
         else:
@@ -330,7 +346,7 @@ def call_cmd_async(cmdlist, stdin=None, env=None):
 
     d = Deferred()
     environment = os.environ
-    if env != None:
+    if env is not None:
         environment.update(env)
     logging.debug('ENV = %s' % environment)
     logging.debug('CMD = %s' % cmdlist)

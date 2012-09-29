@@ -11,7 +11,7 @@ import tempfile
 from twisted.internet.defer import inlineCallbacks
 import datetime
 
-from alot.account import SendingMailFailed
+from alot.account import SendingMailFailed, StoreMailError
 from alot.errors import GPGProblem
 from alot import buffers
 from alot import commands
@@ -118,6 +118,10 @@ class SendCommand(Command):
     def apply(self, ui):
         currentbuffer = ui.current_buffer  # needed to close later
         envelope = currentbuffer.envelope
+
+        # This is to warn the user before re-sending
+        # an already sent message in case the envelope buffer
+        # was not closed because it was the last remaining buffer.
         if envelope.sent_time:
             warning = 'A modified version of ' * envelope.modified_since_sent
             warning += 'this message has been sent at %s.' % envelope.sent_time
@@ -125,6 +129,14 @@ class SendCommand(Command):
             if (yield ui.choice(warning, cancel='no',
                                 msg_position='left')) == 'no':
                 return
+
+        # don't do anything if another SendCommand is in the middle of sending
+        # the message and we were triggered accidentally
+        if envelope.sending:
+            msg = 'sending this message already!'
+            logging.debug(msg)
+            return
+
         frm = envelope.get('From')
         sname, saddr = email.Utils.parseaddr(frm)
 
@@ -155,29 +167,42 @@ class SendCommand(Command):
         clearme = ui.notify('sending..', timeout=-1)
 
         def afterwards(returnvalue):
+            envelope.sending = False
             logging.debug('mail sent successfully')
             ui.clear_notify([clearme])
             envelope.sent_time = datetime.datetime.now()
             ui.apply_command(commands.globals.BufferCloseCommand())
             ui.notify('mail sent successfully')
+
             # store mail locally
-            # add Date header
+            # This can raise StoreMailError
             path = account.store_sent_mail(mail)
+
             # add mail to index if maildir path available
             if path is not None:
                 logging.debug('adding new mail to index')
-                ui.dbman.add_message(path, account.sent_tags)
+                ui.dbman.add_message(path, account.sent_tags + envelope.tags)
                 ui.apply_command(globals.FlushCommand())
 
-        def errb(failure):
+        def send_errb(failure):
+            envelope.sending = False
             ui.clear_notify([clearme])
             failure.trap(SendingMailFailed)
+            logging.error(failure.getTraceback())
             errmsg = 'failed to send: %s' % failure.value
             ui.notify(errmsg, priority='error')
 
+        def store_errb(failure):
+            failure.trap(StoreMailError)
+            logging.error(failure.getTraceback())
+            errmsg = 'could not store mail: %s' % failure.value
+            ui.notify(errmsg, priority='error')
+
+        envelope.sending = True
         d = account.send_mail(mail)
         d.addCallback(afterwards)
-        d.addErrback(errb)
+        d.addErrback(send_errb)
+        d.addErrback(store_errb)
         logging.debug('added errbacks,callbacks')
 
 
@@ -185,8 +210,7 @@ class SendCommand(Command):
     (['--spawn'], {'action': BooleanAction, 'default':None,
                    'help':'spawn editor in new terminal'}),
     (['--refocus'], {'action': BooleanAction, 'default':True,
-                     'help':'refocus envelope after editing'}),
-])
+                     'help':'refocus envelope after editing'})])
 class EditCommand(Command):
     """edit mail"""
     def __init__(self, envelope=None, spawn=None, refocus=True, **kwargs):
@@ -287,8 +311,10 @@ class EditCommand(Command):
         if old_tmpfile:
             os.unlink(old_tmpfile.name)
         cmd = globals.EditCommand(self.envelope.tmpfile.name,
-                                  on_success=openEnvelopeFromTmpfile, spawn=self.force_spawn,
-                                  thread=self.force_spawn, refocus=self.refocus)
+                                  on_success=openEnvelopeFromTmpfile,
+                                  spawn=self.force_spawn,
+                                  thread=self.force_spawn,
+                                  refocus=self.refocus)
         ui.apply_command(cmd)
 
 

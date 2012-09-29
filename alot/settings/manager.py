@@ -81,8 +81,9 @@ class SettingsManager(object):
         if themes_dir:
             themes_dir = os.path.expanduser(themes_dir)
         else:
-            themes_dir = os.path.join(os.environ.get('XDG_CONFIG_HOME',
-                                                     os.path.expanduser('~/.config')), 'alot', 'themes')
+            configdir = os.environ.get('XDG_CONFIG_HOME',
+                                       os.path.expanduser('~/.config'))
+            themes_dir = os.path.join(configdir, 'alot', 'themes')
         logging.debug(themes_dir)
 
         if themestring:
@@ -129,7 +130,7 @@ class SettingsManager(object):
                         raise ConfigError(msg)
                 elif abook['type'] == 'abook':
                     contacts_path = abook['abook_contacts_file']
-                    args['abook'] = AbookAddressBook(contacts_path)
+                    args['abook'] = AbookAddressBook(contacts_path, ignorecase=abook['ignorecase'])
                 else:
                     del(args['abook'])
 
@@ -320,6 +321,10 @@ class SettingsManager(object):
                 value = bindings[mode][key]
                 if value:
                     cmdline = value
+        # Workaround for ConfigObj misbehaviour. cf issue #500
+        # this ensures that we get at least strings only as commandlines
+        if isinstance(cmdline, list):
+            cmdline = ','.join(cmdline)
         return cmdline
 
     def get_accounts(self):

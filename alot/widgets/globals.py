@@ -39,27 +39,30 @@ class AttachmentWidget(urwid.WidgetWrap):
 
 
 class ChoiceWidget(urwid.Text):
-    def __init__(self, choices, callback, cancel=None, select=None):
+    def __init__(self, choices, callback, cancel=None, select=None,
+                 separator=' '):
         self.choices = choices
         self.callback = callback
         self.cancel = cancel
         self.select = select
+        self.separator = separator
 
         items = []
         for k, v in choices.items():
             if v == select and select is not None:
-                items.append('[%s]:%s' % (k, v))
+                items += ['[', k, ']:', v]
             else:
-                items.append('(%s):%s' % (k, v))
-        urwid.Text.__init__(self, ' '.join(items))
+                items += ['(', k, '):', v]
+            items += [self.separator]
+        urwid.Text.__init__(self, items)
 
     def selectable(self):
         return True
 
     def keypress(self, size, key):
-        if key == 'select' and self.select is not None:
+        if key == 'enter' and self.select is not None:
             self.callback(self.select)
-        elif key == 'cancel' and self.cancel is not None:
+        elif key == 'esc' and self.cancel is not None:
             self.callback(self.cancel)
         elif key in self.choices:
             self.callback(self.choices[key])
@@ -114,9 +117,9 @@ class CompleteEdit(urwid.Edit):
                 else:
                     self.historypos = (self.historypos - 1) % len(self.history)
                 self.set_edit_text(self.history[self.historypos])
-        elif key == 'select':
+        elif key == 'enter':
             self.on_exit(self.edit_text)
-        elif key == 'cancel':
+        elif key == 'esc':
             self.on_exit(None)
         elif key == 'ctrl a':
             self.set_edit_pos(0)
@@ -130,13 +133,24 @@ class CompleteEdit(urwid.Edit):
 
 class HeadersList(urwid.WidgetWrap):
     """ renders a pile of header values as key/value list """
-    def __init__(self, headerslist, key_attr, value_attr):
+    def __init__(self, headerslist, key_attr, value_attr, gaps_attr=None):
+        """
+        :param headerslist: list of key/value pairs to display
+        :type headerslist: list of (str, str)
+        :param key_attr: theming attribute to use for keys
+        :type key_attr: urwid.AttrSpec
+        :param value_attr: theming attribute to use for values
+        :type value_attr: urwid.AttrSpec
+        :param gaps_attr: theming attribute to wrap lines in
+        :type gaps_attr: urwid.AttrSpec
+        """
         self.headers = headerslist
         self.key_attr = key_attr
         self.value_attr = value_attr
         pile = urwid.Pile(self._build_lines(headerslist))
-        att = settings.get_theming_attribute('thread', 'header')
-        pile = urwid.AttrMap(pile, att)
+        if gaps_attr is None:
+            gaps_attr = key_attr
+        pile = urwid.AttrMap(pile, gaps_attr)
         urwid.WidgetWrap.__init__(self, pile)
 
     def __str__(self):

@@ -133,7 +133,7 @@ html_theme = 'default'
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
-html_theme_options = {'nosidebar': True}
+html_theme_options = {}
 
 # Add any paths that contain custom themes here, relative to this directory.
 #html_theme_path = []
@@ -242,6 +242,7 @@ latex_documents = [
 # If false, no module index is generated.
 #latex_domain_indices = True
 
+autodoc_member_order = 'groupwise'
 
 # -- Options for manual page output --------------------------------------------
 
@@ -256,5 +257,6 @@ man_pages = [
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     'http://docs.python.org/': None,
-    #'http://notmuch.readthedocs.org/en/latest/': None
+    'http://notmuch.readthedocs.org/en/latest/': None,
+    'http://urwid.readthedocs.org/en/latest/': None
 }

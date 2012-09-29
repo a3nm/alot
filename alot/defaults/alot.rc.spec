@@ -1,8 +1,14 @@
 
 ask_subject = boolean(default=True) # ask for subject when compose
 
+# prompt for initial tags when compose
+compose_ask_tags = boolean(default=False)
+
 # directory prefix for downloading attachments
 attachment_prefix = string(default='~')
+
+# timeout in (floating point) seconds until partial input is cleared
+input_timeout = float(default=1.0)
 
 # confirm exit
 bug_on_exit = boolean(default=False)
@@ -88,7 +94,7 @@ show_statusbar = boolean(default=True)
 # * `{buffer_no}`: index of this buffer in the global buffer list
 # * `{total_messages}`: total numer of messages indexed by notmuch
 # * `{pending_writes}`: number of pending write operations to the index
-bufferlist_statusbar = mixed_list(string, string, default=list('[{buffer_no}: bufferlist]','total messages: {total_messages}'))
+bufferlist_statusbar = mixed_list(string, string, default=list('[{buffer_no}: bufferlist]','{input_queue} total messages: {total_messages}'))
 
 # Format of the status-bar in search mode.
 # This is a pair of strings to be left and right aligned in the status-bar.
@@ -98,7 +104,7 @@ bufferlist_statusbar = mixed_list(string, string, default=list('[{buffer_no}: bu
 # * `{querystring}`: search string
 # * `{result_count}`: number of matching messages
 # * `{result_count_positive}`: 's' if result count is greater than 0.
-search_statusbar = mixed_list(string, string, default=list('[{buffer_no}: search] for "{querystring}"','{result_count} of {total_messages} messages'))
+search_statusbar = mixed_list(string, string, default=list('[{buffer_no}: search] for "{querystring}"','{input_queue} {result_count} of {total_messages} messages'))
 
 # Format of the status-bar in thread mode.
 # This is a pair of strings to be left and right aligned in the status-bar.
@@ -109,13 +115,13 @@ search_statusbar = mixed_list(string, string, default=list('[{buffer_no}: search
 # * `{subject}`: subject line of the thread
 # * `{authors}`: abbreviated authors string for this thread
 # * `{message_count}`: number of contained messages
-thread_statusbar = mixed_list(string, string, default=list('[{buffer_no}: thread] {subject}','total messages: {total_messages}'))
+thread_statusbar = mixed_list(string, string, default=list('[{buffer_no}: thread] {subject}','{input_queue} total messages: {total_messages}'))
 
 # Format of the status-bar in taglist mode.
 # This is a pair of strings to be left and right aligned in the status-bar.
 # These strings may contain variables listed at :ref:`bufferlist_statusbar <bufferlist-statusbar>`
 # that will be substituted accordingly.
-taglist_statusbar = mixed_list(string, string, default=list('[{buffer_no}: taglist]','total messages: {total_messages}'))
+taglist_statusbar = mixed_list(string, string, default=list('[{buffer_no}: taglist]','{input_queue} total messages: {total_messages}'))
 
 # Format of the status-bar in envelope mode.
 # This is a pair of strings to be left and right aligned in the status-bar.
@@ -123,7 +129,7 @@ taglist_statusbar = mixed_list(string, string, default=list('[{buffer_no}: tagli
 # these strings may contain variables:
 #
 # * `{to}`: To-header of the envelope
-envelope_statusbar = mixed_list(string, string, default=list('[{buffer_no}: envelope]','total messages: {total_messages}'))
+envelope_statusbar = mixed_list(string, string, default=list('[{buffer_no}: envelope]','{input_queue} total messages: {total_messages}'))
 
 # timestamp format in `strftime format syntax <http://docs.python.org/library/datetime.html#strftime-strptime-behavior>`_
 timestamp_format = string(default=None)
@@ -162,6 +168,16 @@ quote_prefix = string(default='> ')
 # String prepended to subject header on reply
 # only if original subject doesn't start with 'Re:' or this prefix
 reply_subject_prefix = string(default='Re: ')
+
+# Always use the proper realname when constructing "From" headers
+# for replies/forwards. Set this to False to use the realname string
+# as received in the original message.
+reply_force_realname = boolean(default=True)
+
+# Always use the accounts main address when constructing "From" headers
+# for replies/forwards. Set this to False to use the address string
+# as received in the original message.
+reply_force_address = boolean(default=False)
 
 # String prepended to subject header on forward
 # only if original subject doesn't start with 'Fwd:' or this prefix
@@ -220,7 +236,7 @@ forward_subject_prefix = string(default='Fwd: ')
         sent_tags = force_list(default=list('sent'))
 
         # path to signature file that gets attached to all outgoing mails from this account, optionally
-        # renamed to ref:`signature_filename <signature-filename>`.
+        # renamed to :ref:`signature_filename <signature-filename>`.
         signature = string(default=None)
 
         # attach signature file if set to True, append its content (mimetype text)
@@ -242,6 +258,10 @@ forward_subject_prefix = string(default='Fwd: ')
         [[[abook]]]
             # type identifier for address book
             type = option('shellcommand', 'abook', default=None)
+
+            # make case-insensitive lookups
+            ignorecase = boolean(default=True)
+
             # command to lookup contacts in shellcommand abooks
             # it will be called with the lookup prefix as only argument
             command = string(default=None)

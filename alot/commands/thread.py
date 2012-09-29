@@ -2,6 +2,7 @@
 # This file is released under the GNU GPL, version 3 or a later revision.
 # For further details see the COPYING file
 import os
+import re
 import logging
 import tempfile
 from twisted.internet.defer import inlineCallbacks
@@ -54,22 +55,36 @@ def recipient_to_from(mail, my_accounts):
     if delivered_to is not None:
         recipients.append(delivered_to)
 
+    logging.debug('recipients: %s' % recipients)
     # pick the most important account that has an address in recipients
     # and use that accounts realname and the found recipient address
     for acc in my_accounts:
         acc_addresses = acc.get_addresses()
-        for rec in recipients:
-            _, raddress = parseaddr(rec)
-            raddress = raddress.decode()
-            if raddress in acc_addresses and realname is None:
-                realname = acc.realname
-                address = raddress
+        for alias_re in acc_addresses:
+            if realname is not None:
+                break
+            regex = re.compile(alias_re)
+            for rec in recipients:
+                seen_name, seen_address = parseaddr(rec)
+                if regex.match(seen_address):
+                    logging.debug("match!: '%s' '%s'" % (seen_address, alias_re))
+                    if settings.get('reply_force_realname'):
+                        realname = acc.realname
+                    else:
+                        realname = seen_name
+                    if settings.get('reply_force_address'):
+                        address = acc.address
+                    else:
+                        address = seen_address
 
     # revert to default account if nothing found
     if realname is None:
         realname = my_accounts[0].realname
         address = my_accounts[0].address
-    return realname, address
+    logging.debug('using realname: "%s"' % realname)
+    logging.debug('using address: %s' % address)
+
+    return address if realname == '' else '%s <%s>' % (realname, address)
 
 
 @registerCommand(MODE, 'reply', arguments=[
@@ -135,8 +150,7 @@ class ReplyCommand(Command):
         envelope.add('Subject', subject)
 
         # set From
-        realname, address = recipient_to_from(mail, my_accounts)
-        envelope.add('From', '%s <%s>' % (realname, address))
+        envelope.add('From', recipient_to_from(mail, my_accounts))
 
         # set To
         sender = mail['Reply-To'] or mail['From']
@@ -258,8 +272,7 @@ class ForwardCommand(Command):
         envelope.add('Subject', subject)
 
         # set From
-        realname, address = recipient_to_from(mail, my_accounts)
-        envelope.add('From', '%s <%s>' % (realname, address))
+        envelope.add('From', recipient_to_from(mail, my_accounts))
 
         # continue to compose
         ui.apply_command(ComposeCommand(envelope=envelope,
@@ -318,8 +331,8 @@ class EditNewCommand(Command):
     (['--all'], {'action': 'store_true', 'help':'affect all messages'})],
     help='display message source')
 @registerCommand(MODE, 'toggleheaders', forced={'all_headers': 'toggle'},
-                 arguments=[
-                 (['--all'], {'action': 'store_true', 'help':'affect all messages'})],
+                 arguments=[(['--all'], {'action': 'store_true',
+                            'help':'affect all messages'})],
                  help='display all headers')
 class ChangeDisplaymodeCommand(Command):
     """fold or unfold messages"""
@@ -388,7 +401,7 @@ class ChangeDisplaymodeCommand(Command):
     (['--shell'], {'action': 'store_true',
                    'help':'let the shell interpret the command'}),
     (['--notify_stdout'], {'action': 'store_true',
-                           'help':'display command\'s stdout as notification message'}),
+                           'help':'display cmd\'s stdout as notification'}),
 ],
 )
 class PipeCommand(Command):
@@ -396,7 +409,7 @@ class PipeCommand(Command):
     def __init__(self, cmd, all=False, separately=False, background=False,
                  shell=False, notify_stdout=False, format='raw',
                  add_tags=False, noop_msg='no command specified',
-                 confirm_msg='', done_msg='done', **kwargs):
+                 confirm_msg='', done_msg=None, **kwargs):
         """
         :param cmd: shellcommand to open
         :type cmd: str or list of str
@@ -480,7 +493,7 @@ class PipeCommand(Command):
                 mail = msg.get_email()
                 if self.add_tags:
                     mail['Tags'] = encode_header('Tags',
-                                                 ' '.join(msg.get_tags()))
+                                                 ', '.join(msg.get_tags()))
                 if self.output_format == 'raw':
                     pipestrings.append(mail.as_string())
                 elif self.output_format == 'decoded':
@@ -503,13 +516,17 @@ class PipeCommand(Command):
                                         stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE)
                 out, err = proc.communicate(mail)
+                if self.notify_stdout:
+                    ui.notify(out)
             else:
                 logging.debug('stop urwid screen')
                 ui.mainloop.screen.stop()
                 logging.debug('call: %s' % str(self.cmd))
+                # if proc.stdout is defined later calls to communicate
+                # seem to be non-blocking!
                 proc = subprocess.Popen(self.cmd, shell=True,
                                         stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE,
+                                        #stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE)
                 out, err = proc.communicate(mail)
                 logging.debug('start urwid screen')
@@ -517,8 +534,6 @@ class PipeCommand(Command):
             if err:
                 ui.notify(err, priority='error')
                 return
-            if self.notify_stdout:
-                ui.notify(out)
 
         # display 'done' message
         if self.done_msg:

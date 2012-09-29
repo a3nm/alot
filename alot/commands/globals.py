@@ -23,6 +23,7 @@ from alot import helper
 from alot.db.errors import DatabaseLockedError
 from alot.completion import ContactsCompleter
 from alot.completion import AccountCompleter
+from alot.completion import TagsCompleter
 from alot.db.envelope import Envelope
 from alot import commands
 from alot.settings import settings
@@ -56,6 +57,10 @@ class SearchCommand(Command):
         """
         :param query: notmuch querystring
         :type query: str
+        :param sort: how to order results. Must be one of
+                     'oldest_first', 'newest_first', 'message_id' or
+                     'unsorted'.
+        :type sort: str
         """
         self.query = ' '.join(query)
         self.order = sort
@@ -110,12 +115,7 @@ class PromptCommand(Command):
         if cmdline:
             # save into prompt history
             ui.commandprompthistory.append(cmdline)
-
-            try:
-                cmd = commandfactory(cmdline, mode)
-                ui.apply_command(cmd)
-            except CommandParseError, e:
-                ui.notify(e.message, priority='error')
+            ui.apply_commandline(cmdline)
 
 
 @registerCommand(MODE, 'refresh')
@@ -240,8 +240,8 @@ class ExternalCommand(Command):
         else:
             ui.mainloop.screen.stop()
             ret = thread_code()
-            afterwards(ret)
             ui.mainloop.screen.start()
+            afterwards(ret)
 
 
 #@registerCommand(MODE, 'edit', arguments=[
@@ -317,12 +317,17 @@ class CallCommand(Command):
 
     def apply(self, ui):
         try:
+            hooks = settings.hooks
+            env = {'ui': ui, 'settings': settings}
+            for k, v in env.items():
+                if k not in hooks.__dict__:
+                    hooks.__dict__[k] = v
+
             exec self.command
         except Exception as e:
             logging.exception(e)
-            msg = 'an error occurred during execution of "%s":\n'\
-                  '%s\nSee the logfile for details'
-            ui.notify(msg % e, priority='error')
+            msg = 'an error occurred during execution of "%s":\n%s'
+            ui.notify(msg % (self.command, e), priority='error')
 
 
 @registerCommand(MODE, 'bclose', arguments=[
@@ -348,9 +353,10 @@ class BufferCloseCommand(Command):
 
         if (isinstance(self.buffer, buffers.EnvelopeBuffer) and
                 not self.buffer.envelope.sent_time):
-            if (not self.force and
-                    (yield ui.choice('close without sending?', select='yes',
-                                cancel='no', msg_position='left')) == 'no'):
+            if (not self.force and (yield ui.choice('close without sending?',
+                                                    select='yes', cancel='no',
+                                                    msg_position='left')) ==
+                    'no'):
                 return
 
         if len(ui.buffers) == 1:
@@ -368,26 +374,39 @@ class BufferCloseCommand(Command):
                  help='focus previous buffer')
 @registerCommand(MODE, 'bnext', forced={'offset': +1},
                  help='focus next buffer')
+@registerCommand(MODE, 'buffer', arguments=[
+    (['index'], {'type':int, 'help':'buffer index to focus'}), ],
+    help='focus buffer with given index')
 class BufferFocusCommand(Command):
     """focus a :class:`~alot.buffers.Buffer`"""
-    def __init__(self, buffer=None, offset=0, **kwargs):
+    def __init__(self, buffer=None, index=None, offset=0, **kwargs):
         """
         :param buffer: the buffer to focus or None
         :type buffer: `alot.buffers.Buffer`
+        :param index: index (in bufferlist) of the buffer to focus.
+        :type index: int
         :param offset: position of the buffer to focus relative to the
                        currently focussed one. This is used only if `buffer`
                        is set to `None`
         :type offset: int
         """
         self.buffer = buffer
+        self.index = index
         self.offset = offset
         Command.__init__(self, **kwargs)
 
     def apply(self, ui):
-        if self.offset:
-            idx = ui.buffers.index(ui.current_buffer)
+        if self.buffer is None:
+            if self.index is not None:
+                try:
+                    self.buffer = ui.buffers[self.index]
+                except IndexError:
+                    ui.notify('no buffer exists at index %d' % self.index)
+                    return
+            else:
+                self.index = ui.buffers.index(ui.current_buffer)
             num = len(ui.buffers)
-            self.buffer = ui.buffers[(idx + self.offset) % num]
+            self.buffer = ui.buffers[(self.index + self.offset) % num]
         ui.buffer_focus(self.buffer)
 
 
@@ -490,8 +509,8 @@ class HelpCommand(Command):
             linewidgets = []
             # mode specific maps
             if modemaps:
-                linewidgets.append(urwid.Text((section_att,
-                                               '\n%s-mode specific maps' % ui.mode)))
+                txt = (section_att, '\n%s-mode specific maps' % ui.mode)
+                linewidgets.append(urwid.Text(txt))
                 for (k, v) in modemaps.items():
                     line = urwid.Columns([('fixed', keycolumnwidth,
                                            urwid.Text((text_att, k))),
@@ -508,18 +527,17 @@ class HelpCommand(Command):
                     linewidgets.append(line)
 
             body = urwid.ListBox(linewidgets)
-            ckey = 'cancel'
-            titletext = 'Bindings Help (%s cancels)' % ckey
+            titletext = 'Bindings Help (escape cancels)'
 
             box = DialogBox(body, titletext,
                             bodyattr=text_att,
                             titleattr=title_att)
 
             # put promptwidget as overlay on main widget
-            overlay = urwid.Overlay(box, ui.mainframe_themed, 'center',
+            overlay = urwid.Overlay(box, ui.root_widget, 'center',
                                     ('relative', 70), 'middle',
                                     ('relative', 70))
-            ui.show_as_root_until_keypress(overlay, 'cancel')
+            ui.show_as_root_until_keypress(overlay, 'esc')
         else:
             logging.debug('HELP %s' % self.commandname)
             parser = commands.lookup_parser(self.commandname, ui.mode)
@@ -651,12 +669,7 @@ class ComposeCommand(Command):
                 if fromaddress is None:
                     ui.notify('canceled')
                     return
-                a = settings.get_account_by_address(fromaddress)
-                if a is not None:
-                    fromstring = "%s <%s>" % (a.realname, a.address)
-                    self.envelope.add('From', fromstring)
-                else:
-                    self.envelope.add('From', fromaddress)
+                self.envelope.add('From', fromaddress)
 
         # add signature
         if not self.omit_signature:
@@ -683,8 +696,8 @@ class ComposeCommand(Command):
                     else:
                         ui.notify('could not locate signature: %s' % sig,
                                   priority='error')
-                        if (yield ui.choice('send without signature',
-                                            select='yes', cancel='no')) == 'no':
+                        if (yield ui.choice('send without signature?', 'yes',
+                                            'no')) == 'no':
                             return
 
         # Figure out whether we should GPG sign messages by default
@@ -723,6 +736,15 @@ class ComposeCommand(Command):
                 return
             self.envelope.add('Subject', subject)
 
+        if settings.get('compose_ask_tags'):
+            comp = TagsCompleter(ui.dbman)
+            tagsstring = yield ui.prompt('Tags', completer=comp)
+            tags = filter(lambda x: x, tagsstring.split(','))
+            if tags is None:
+                ui.notify('canceled')
+                return
+            self.envelope.tags = tags
+
         if self.attach:
             for gpath in self.attach:
                 for a in glob.glob(gpath):
@@ -730,23 +752,22 @@ class ComposeCommand(Command):
                     logging.debug('attaching: ' + a)
 
         cmd = commands.envelope.EditCommand(envelope=self.envelope,
-                                            spawn=self.force_spawn, refocus=False)
+                                            spawn=self.force_spawn,
+                                            refocus=False)
         ui.apply_command(cmd)
 
 
-@registerCommand(MODE, 'move', help='move focus', arguments=[
-    (['key'], {'nargs':'+', 'help':'direction'})])
-@registerCommand(MODE, 'cancel', help='send cancel event',
-                 forced={'key': 'cancel'})
-@registerCommand(MODE, 'select', help='send select event',
-                 forced={'key': 'select'})
-class SendKeypressCommand(Command):
-    """send a keypress to the main widget to be processed by urwid"""
-    def __init__(self, key, **kwargs):
-        Command.__init__(self, **kwargs)
-        if isinstance(key, list):
-            key = ' '.join(key)
-        self.key = key
+class CommandSequenceCommand(Command):
+    """Meta-Command that just applies a sequence of given Commands in order"""
 
+    def __init__(self, commandlist=[], **kwargs):
+        Command.__init__(self, **kwargs)
+        self.commandlist = commandlist
+
+    @inlineCallbacks
     def apply(self, ui):
-        ui.keypress(self.key)
+        for cmdstring in self.commandlist:
+            logging.debug('CMDSEQ: apply %s' % str(cmdstring))
+            # translate cmdstring into :class:`Command`
+            cmd = commandfactory(cmdstring, ui.mode)
+            yield ui.apply_command(cmd)
